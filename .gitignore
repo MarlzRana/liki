@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────
+#  liki — privacy-by-default .gitignore
+#
+#  Everything under wiki/, inbox/, and assets/ is PRIVATE by default: it is
+#  ignored here and never leaves your machine except via your own cloud sync
+#  (e.g. iCloud). Git tracks only what you explicitly allowlist below.
+#
+#  `install-wiki` rewrites the PUBLIC ALLOWLIST block once you choose which
+#  domains to make public. Until then, NOTHING under wiki/ is committed —
+#  a clone that gets pushed before setup can never leak a private note.
+#
+#  ORDER MATTERS: gitignore is last-match-wins. The `*.local.md` rule is kept
+#  as the FINAL line on purpose, so it overrides every allowlist above it and
+#  a `.local.md` note can never be committed — not even inside a public domain.
+#  Do not add anything after it.
+# ─────────────────────────────────────────────────────────────────────────
+
+# OS / editor cruft
+.DS_Store
+.trash/
+
+# ── Vault content: private by default ──
+wiki/*
+inbox/*
+assets/*
+index.md
+log.md
+
+# Keep the empty vault skeleton present on a fresh clone
+!wiki/.gitkeep
+
+# Always-public drop zones (only ever hold public, non-personal files)
+!inbox/public/
+!inbox/public/**
+!assets/public/
+!assets/public/**
+
+# ── Obsidian: ship app + plugin config, not layout/hotkeys ──
+.obsidian/*
+!.obsidian/app.json
+!.obsidian/core-plugins.json
+!.obsidian/community-plugins.json
+
+# ── PUBLIC ALLOWLIST ──
+# install-wiki writes your chosen public wiki/ domains here. Example, to make
+# a Technical domain public (mirrors the template author's own setup):
+#     !wiki/Technical/
+#     !wiki/Technical/**
+# Add your `!wiki/<Domain>/` re-includes in THIS block, above the *.local.md
+# line — never below it.
+# <to_be_determined_from_install_skill>
+
+# ── Convention: *.local.md is NEVER committed, anywhere — KEEP LAST ──
+# Overrides every allowlist above so a sensitive note stays private even inside
+# a public domain. Nothing may follow this line.
+*.local.md

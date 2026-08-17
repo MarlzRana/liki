@@ -1,0 +1,8 @@
+{
+  "name": "liki",
+  "private": true,
+  "description": "An LLM-maintained personal knowledge base (an 'LLM Wiki'). This package.json exists only to pin the Node toolchain via Volta, so the qmd search CLI's native dependency (better-sqlite3, built against Node 22 / NODE_MODULE_VERSION 127) loads correctly when qmd is run from this directory.",
+  "volta": {
+    "node": "22.22.1"
+  }
+}
