@@ -3,10 +3,11 @@
 **A template for your own LLM-maintained personal wiki.**
 
 You capture notes messily — dictated on your phone, clipped from the web, typed
-half-finished — into an `inbox/`. An LLM (via [Claude Code](https://claude.com/claude-code))
-processes them into clean, cross-linked, human-readable pages in a wiki you browse in
-[Obsidian](https://obsidian.md). The wiki is the durable, compounding artifact; the LLM
-does the summarising, cross-referencing, filing, and bookkeeping.
+half-finished — into an `inbox/`. An LLM coding agent — [Claude Code](https://claude.com/claude-code),
+Cursor, Codex, Gemini CLI, opencode, and others all work — processes them into clean,
+cross-linked, human-readable pages in a wiki you browse in [Obsidian](https://obsidian.md).
+The wiki is the durable, compounding artifact; the agent does the summarising,
+cross-referencing, filing, and bookkeeping.
 
 `liki` is the scaffolding — conventions, skills, and structure — plus a one-command
 installer that stands up your own copy. It ships **no personal notes**; you fill it with
@@ -31,19 +32,30 @@ remote so you can pull future improvements.
 
 ## Install
 
-You need [Claude Code](https://claude.com/claude-code), the
-[GitHub CLI](https://cli.github.com) (`gh auth login`), Homebrew, and — recommended —
-Obsidian on your devices. macOS is assumed (iCloud, brew, the Obsidian CLI).
+**Any coding agent works** — the installer is a standard [agent skill](https://skills.sh),
+not a Claude-Code-only thing. Claude Code, Cursor, Codex, Gemini CLI, opencode, GitHub
+Copilot, Windsurf, and the rest of the agents the `skills` CLI supports can all drive it.
+You'll also need the [GitHub CLI](https://cli.github.com) (`gh auth login`), Homebrew, and —
+recommended — Obsidian on your devices. macOS is assumed (iCloud, brew, the Obsidian CLI);
+the git and tooling steps work anywhere.
 
-Install the bootstrap skill globally, then invoke it from anywhere:
+Install the bootstrap skill globally, naming **your** agent(s):
+
+```bash
+npx skills add https://github.com/MarlzRana/liki --skill install-wiki --agent universal <your-agent> -g -y
+```
+
+`universal` writes the skill to the shared `~/.agents/skills/` that most agents read
+directly; naming your agent (e.g. `claude-code`, `cursor`, `codex`, `gemini-cli`) also
+creates that agent's own link if it keeps skills elsewhere — Claude Code, for instance,
+reads `~/.claude/skills`. Pass as many agents as you use. For Claude Code specifically:
 
 ```bash
 npx skills add https://github.com/MarlzRana/liki --skill install-wiki --agent universal claude-code -g -y
 ```
 
-This installs `install-wiki` to the agent-agnostic `~/.agents/skills/` **and** symlinks it
-into `~/.claude/skills/`, so it's discoverable whether you drive it with Claude Code or
-another agent. (If you use a different agent, add its name to the `--agent` list.)
+Then open your agent and run the skill — however that agent invokes skills; most use a
+`/install-wiki` slash command. In Claude Code:
 
 ```
 claude
@@ -69,9 +81,9 @@ claude
 
 - **Capture:** drop anything into `inbox/` — text, PDFs, photos of handwriting, voice
   memos, office docs. Any file type is fair game.
-- **Ingest:** run `/process-inbox`. Claude reads the captures, cleans up dictation/typing
-  artifacts silently, routes each to a domain, cross-links related pages, and archives the
-  original.
+- **Ingest:** run `/process-inbox`. Your agent reads the captures, cleans up
+  dictation/typing artifacts silently, routes each to a domain, cross-links related pages,
+  and archives the original.
 - **Query:** run `/query-wiki` to search and synthesise across your notes.
 - **Lint:** run `/lint-wiki` to health-check for orphans, contradictions, and stale
   content.
