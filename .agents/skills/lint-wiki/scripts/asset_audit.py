@@ -15,7 +15,7 @@ session's `grep` is a wrapper around `ugrep --ignore-files`, which honours
 `rg --no-ignore` or `/usr/bin/grep`.)
 
 Rules enforced (see <assets> and <privacy_and_git> in AGENTS.md):
-  - assets/public/ is for assets referenced by PUBLIC-domain notes, and only those
+  - assets/public/ is for assets referenced by PUBLIC (committed) notes, and only those
   - everything else stays in the private assets/ root
   - references use explicit vault-root paths, never bare filenames
   - asset files use descriptive kebab-case names
@@ -23,18 +23,12 @@ Rules enforced (see <assets> and <privacy_and_git> in AGENTS.md):
 "Asset" means any file under assets/, not just imagery: preserved source
 documents (PDFs kept as lasting references) live there too and are linked rather
 than embedded. See <artifact_retention> in AGENTS.md.
-
-LIMITATION (liki template): the leak/promote logic below keys on the literal
-domain name "Technical" as the public domain — the template author's setup. If
-your public domain(s) differ (you chose them during install-wiki), edit the
-"Technical" checks in main() to match, or replace them with a git-tracked test
-(`git check-ignore <note>` → private). Until then, run this audit with that
-caveat in mind; it will mis-classify assets tied to a non-Technical public domain.
 """
 
 import collections
 import os
 import re
+import subprocess
 import sys
 
 # Matches embeds (![[…]]) and plain links ([[…]]) alike, capturing the leading
@@ -86,29 +80,61 @@ def main():
         if not os.path.exists(t)
     ]
 
-    leaks, unref_public, promote, dead, inbox_only = [], [], [], [], []
+    # Classify each referencing note as public (committed) or private (gitignored).
+    # "Public" is defined by git — a note is public iff git does not ignore it — so the
+    # audit works for ANY choice of public domains, with no hardcoded domain name.
+    # See <privacy_and_git> in AGENTS.md.
+    all_ref_notes = sorted({n for notes in refs.values() for n in notes})
+    private_notes = set()
+    if all_ref_notes:
+        proc = subprocess.run(
+            ["git", "check-ignore", "--stdin"],
+            input="\n".join(all_ref_notes),
+            capture_output=True,
+            text=True,
+        )
+        # 0 = some paths ignored, 1 = none ignored; anything else is a real failure
+        # (e.g. not inside a git repo), which would silently mark every note "public".
+        if proc.returncode not in (0, 1):
+            sys.exit(
+                "error: `git check-ignore` failed — run this from inside the git repo.\n"
+                + proc.stderr.strip()
+            )
+        private_notes = {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+
+    def split_refs(notes):
+        pub = [n for n in notes if n not in private_notes]
+        priv = [n for n in notes if n in private_notes]
+        return pub, priv
+
+    leaks, unref_public, promote, dead, private_only = [], [], [], [], []
     for a in sorted(assets):
         notes = refs.get(a, [])
-        wiki_domains = sorted({n.split("/")[1] for n in notes if n.startswith("wiki/")})
+        pub, priv = split_refs(notes)
         if a.startswith("assets/public/"):
+            # Committed and world-readable — legitimate only if a public note uses it.
             if not notes:
                 unref_public.append(a)
-            elif not wiki_domains:
-                leaks.append(f"{a} -> referenced only by inbox: {', '.join(notes)}")
-            elif wiki_domains != ["Technical"]:
-                leaks.append(f"{a} -> embedded by {', '.join(wiki_domains)}")
+            elif not pub:
+                leaks.append(
+                    f"{a} -> referenced only by PRIVATE notes: {', '.join(priv)}"
+                )
+            # else: at least one public note references it -> correctly public
         else:
-            tech = [n for n in notes if n.startswith("wiki/Technical/")]
-            if tech:
-                promote.append(f"{a} -> embedded by {', '.join(tech)}")
+            # Private asset. A public note embedding it means the committed repo has a
+            # broken embed, and the asset should be promoted to assets/public/.
+            if pub:
+                promote.append(f"{a} -> embedded by public note(s): {', '.join(pub)}")
             elif not notes:
                 dead.append(a)
-            elif not wiki_domains:
-                inbox_only.append(f"{a} -> only in {', '.join(notes)}")
+            else:
+                private_only.append(f"{a} -> only in {', '.join(priv)}")
 
-    findings["PRIVACY LEAKS (in assets/public/ but not Technical-only)"] = leaks
+    findings[
+        "PRIVACY LEAKS (in assets/public/ but referenced only by private notes)"
+    ] = leaks
     findings["UNREFERENCED PUBLIC ASSETS (demote to private assets/)"] = unref_public
-    findings["SHOULD BE PROMOTED (private, but a Technical note embeds it)"] = promote
+    findings["SHOULD BE PROMOTED (private asset embedded by a public note)"] = promote
     findings["CRYPTIC NAMES (rename to descriptive kebab-case)"] = [
         a for a in assets if CRYPTIC.search(os.path.basename(a))
     ]
@@ -123,7 +149,7 @@ def main():
     # Informational: these are usually deliberate. Do not report as defects
     # without checking log.md — past lints have explicitly accepted some.
     findings["(info) PRIVATE ASSETS WITH NO REFERENCE ANYWHERE"] = dead
-    findings["(info) PRIVATE ASSETS REFERENCED ONLY BY INBOX NOTES"] = inbox_only
+    findings["(info) PRIVATE ASSETS REFERENCED ONLY BY PRIVATE NOTES"] = private_only
 
     problems = 0
     for title, items in findings.items():

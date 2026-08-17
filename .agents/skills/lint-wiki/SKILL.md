@@ -13,7 +13,7 @@ You are performing a health-check on the wiki knowledge base. Your goal is to id
 
 ### 0. Searching the vault — read this first
 
-**Do not use bare `grep` for vault-wide sweeps.** In this environment `grep` is a shell function wrapping `ugrep --ignore-files`, which honours `.gitignore` — so it silently returns *no matches* across the private trees (`inbox/`, `assets/`, and every `wiki/` domain except `Technical/`). A sweep that should have found a stale reference reports a clean bill of health instead.
+**Do not use bare `grep` for vault-wide sweeps.** In this environment `grep` is a shell function wrapping `ugrep --ignore-files`, which honours `.gitignore` — so it silently returns *no matches* across the private trees (`inbox/`, `assets/`, and every private `wiki/` domain). A sweep that should have found a stale reference reports a clean bill of health instead.
 
 Use `rg --no-ignore` (add `--hidden` to include dotfiles), or `/usr/bin/grep` to bypass the wrapper:
 
@@ -92,8 +92,8 @@ Check that wiki pages have consistent frontmatter:
 
 Assets are private by default: `assets/` is gitignored, and only `assets/public/` is committed. Embeds use explicit vault-root-relative paths (`![[assets/public/…]]` for public, `![[assets/…]]` for private) and image files use descriptive kebab-case names (see `<assets>` and `<privacy_and_git>` in AGENTS.md). Check for:
 
-- **Privacy leaks:** files in `assets/public/` embedded *only* by non-Technical notes (Career, Family, Investments, Personal, Projects, Travel, Other), or by *no* note at all — these should be demoted to the private `assets/` root.
-- **Inverse:** files in the private `assets/` root that a `wiki/Technical/` note embeds — these should be promoted to `assets/public/`.
+- **Privacy leaks:** files in `assets/public/` embedded *only* by private notes (notes in a domain that isn't committed), or by *no* note at all — these should be demoted to the private `assets/` root.
+- **Inverse:** files in the private `assets/` root that a *public* (committed) note embeds — these should be promoted to `assets/public/`.
 - **Path/location mismatch:** an embed whose path disagrees with where the file actually lives (e.g. `![[assets/public/foo.png]]` but the file is in the `assets/` root) — the embed won't resolve.
 - **Bare-filename embeds:** any `![[name.ext]]` without an `assets/` or `assets/public/` prefix — should be rewritten to an explicit path.
 - **Cryptic names:** files still named `IMG_*`, `Pasted image *`, or otherwise non-descriptive — should be renamed to kebab-case describing the image.
