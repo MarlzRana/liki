@@ -215,7 +215,7 @@ new attachments save to `assets/`, and if they want pasted-image embeds to use e
 vault-root paths, set **New link format → Absolute path in vault** and **Use
 [[Wikilinks]] → on**.
 
-## 10. Wire up Claude Desktop for diagrams (final step)
+## 10. Wire up Claude Desktop for diagrams
 
 The vault includes **`CLAUDE_DESKTOP.md`** — instructions for the Claude **Desktop** chat
 app (distinct from Claude Code) on how to author diagrams that match this wiki's
