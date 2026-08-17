@@ -228,7 +228,25 @@ for Claude** — either paste the contents of `CLAUDE_DESKTOP.md` there, or refe
 can download and copy-paste straight into a wiki page** (as `![[assets/public/name.html]]`
 via embed-html), without re-explaining the format each time.
 
-## 11. Wrap up
+## 11. Open the vault on their phone or iPad (recommended, if they chose iCloud)
+
+If the user has an iPhone or iPad **and** chose iCloud as the vault's storage in step 2,
+recommend they open the wiki in the **Obsidian mobile app** now:
+
+1. Install **Obsidian** from the App Store.
+2. On first launch, choose **"Open folder as vault"** and pick the vault from iCloud —
+   it lives in the `iCloud~md~obsidian/Documents/<name>` container that the desktop app
+   already syncs to, so it appears automatically once iCloud has synced.
+
+The payoff is **capture-on-the-go**: dictating or jotting a rough note straight into
+`inbox/` from their phone, which is the primary way the wiki gets fed — messy captures in,
+clean pages out later on the desktop via `/process-inbox`.
+
+This only works if **iCloud** (not a local-only folder) was chosen as the storage medium
+in step 2. If they picked a local path, there's nothing to open on mobile — mention that
+they can move the vault into iCloud later if they want phone sync.
+
+## 12. Wrap up
 
 Summarise what was created (repo + visibility, vault path, domains + privacy, tools
 installed) and point them at the next step:
