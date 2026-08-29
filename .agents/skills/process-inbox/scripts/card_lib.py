@@ -33,10 +33,11 @@ CONTENT_ROOT = "wiki"  # the wiki/ content dir inside the vault root
 MINT = "MINT"  # placeholder an LLM writes; mint_ids.py replaces it
 
 
-def vault_name():
-    """Obsidian vault name for obsidian:// links — the vault-root folder's basename
-    (set WIKI_VAULT_NAME to override). Scripts are run from the vault root."""
-    return os.environ.get("WIKI_VAULT_NAME") or os.path.basename(os.path.abspath("."))
+def vault_name(root="."):
+    """Obsidian vault name for obsidian:// links — the basename of the vault root
+    (set WIKI_VAULT_NAME to override). Pass the resolved `--vault` root so the name
+    matches the vault actually being scanned, not the process's cwd."""
+    return os.environ.get("WIKI_VAULT_NAME") or os.path.basename(os.path.abspath(root))
 
 
 SECTION_RE = re.compile(r"^##\s+Anki\s+Cards\s*$")
@@ -152,6 +153,19 @@ def parse_cards(text, path="<mem>"):
             )
         if not card.back:
             res.errors.append(f"{path}:{i + 1}: [!card] has an empty back (no answer)")
+        # Quoted content after the id comment in the same callout is silently lost
+        # (the block already closed at the id line) — flag it rather than drop it.
+        if block_end is not None and block_end + 1 < end:
+            trailing = _CONT.match(lines[block_end + 1])
+            if (
+                trailing
+                and not _MARKER.match(lines[block_end + 1])
+                and trailing.group(1).strip()
+            ):
+                res.errors.append(
+                    f"{path}:{block_end + 2}: quoted content after the `<!-- anki: … -->` "
+                    "id line in the same [!card] block (Anki would never see it)"
+                )
         if card_id == MINT:
             res.placeholders.append(card)
         elif ULID_RE.fullmatch(card_id):
@@ -220,9 +234,12 @@ def public_pages(paths, cwd="."):
 _BLOCK_MATH = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 # Inline math, pandoc-style: the opening `$` isn't followed by whitespace, the
 # closing `$` isn't preceded by whitespace and isn't followed by a digit. That
-# last rule keeps currency out — `from $5 to $20` is not math. Not DOTALL, so an
-# inline span can't swallow a newline.
-_INLINE_MATH = re.compile(r"(?<![\$\\])\$(?!\$)(?!\s)(.+?)(?<![\s\$\\])\$(?!\$)(?!\d)")
+# last rule plus a `[^$]` body (which can't cross another `$`) keeps currency out
+# — in `It costs $5, computed as $c=pq$` only `$c=pq$` is math, `$5` is left alone.
+# Not DOTALL, so an inline span can't swallow a newline either.
+_INLINE_MATH = re.compile(
+    r"(?<![\$\\])\$(?!\$)(?!\s)([^$]+?)(?<![\s\$\\])\$(?!\$)(?!\d)"
+)
 # Any `![[assets/…]]` embed: an optional `#fragment` and an optional `|modifier`
 # (a size like `300` / `300x200`, or alt text). Matching every variant — not just
 # a bare `|NNN` — is what lets find_media see (and the privacy guard reject) a
@@ -300,10 +317,11 @@ def render_field(text):
 
     s = _EMBED.sub(_img, s)
     s = html.escape(s, quote=False)  # prose only — math/img are stashed away
-    # collapse intra-line whitespace but keep line breaks as <br>: Anki renders
-    # fields as HTML, so a bare newline would vanish and mash a multi-line back
-    # onto one line.
-    s = "<br>".join(" ".join(line.split()) for line in s.split("\n"))
+    # Keep line breaks as <br> (Anki renders fields as HTML, so a bare newline
+    # would vanish and mash a multi-line back onto one line). Only trailing
+    # whitespace is trimmed — leading indentation is preserved, so a card's
+    # deliberate structure isn't flattened.
+    s = "<br>".join(line.rstrip() for line in s.split("\n"))
     for i, rendered in enumerate(saved):
         s = s.replace(f"\x00{i}\x00", rendered)
     return unicodedata.normalize("NFC", s)
@@ -368,6 +386,16 @@ def _self_test():
         "eb.md",
     )
     eq("empty back flagged", len(eb.errors) == 1 and "empty back" in eb.errors[0], True)
+    tail = parse_cards(
+        "## Anki Cards\n> [!card]- Q?\n> A.\n"
+        "> <!-- anki: 01ARZ3NDEKTSV4RRFFQ69G5FAV -->\n> lost line\n",
+        "tail.md",
+    )
+    eq(
+        "content after id flagged",
+        len(tail.errors) == 1 and "after the" in tail.errors[0],
+        True,
+    )
 
     print("deck_for_page:")
     eq("nested", deck_for_page("wiki/Domain/Sub/Some Page.md"), "Wiki::Domain::Sub")
@@ -431,6 +459,16 @@ def _self_test():
         "line breaks become <br>",
         render_field("First line.\nSecond line."),
         "First line.<br>Second line.",
+    )
+    eq(
+        "currency next to real math: only the math converts",
+        render_field("It costs $5, computed as $c = pq$."),
+        r"It costs $5, computed as \(c = pq\).",
+    )
+    eq(
+        "leading indentation preserved",
+        render_field("def f():\n    return 1"),
+        "def f():<br>    return 1",
     )
 
     print("\nRESULT:", "PASS" if ok else "FAIL")

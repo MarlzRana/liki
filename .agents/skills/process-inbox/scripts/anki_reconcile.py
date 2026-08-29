@@ -40,6 +40,9 @@ def build_records(pages, vault_root):
     """Parse each public page → {ulid: record}. Collects every error; the caller
     aborts the whole run if any exist (loud-fail, plan §07)."""
     records, errors = {}, []
+    # Source URIs must name the vault actually being scanned, not the process cwd.
+    vname = card_lib.vault_name(vault_root)
+    basenames = {}  # asset basename -> source path, to catch a name collision
     for page in pages:
         text = open(os.path.join(vault_root, page), encoding="utf-8").read()
         pr = card_lib.parse_cards(text, page)
@@ -48,7 +51,8 @@ def build_records(pages, vault_root):
             errors.append(
                 f"{page}:{c.start + 1}: unminted MINT placeholder — run mint_ids.py"
             )
-        deck, source = card_lib.deck_for_page(page), card_lib.source_uri(page)
+        deck = card_lib.deck_for_page(page)
+        source = card_lib.source_uri(page, vault=vname)
         for c in pr.cards:
             if c.id in records:
                 errors.append(
@@ -62,10 +66,21 @@ def build_records(pages, vault_root):
                         f"{page}: card {c.id} embeds PRIVATE asset {m.asset} "
                         "— refusing to put private content in a public card"
                     )
-                elif not os.path.exists(os.path.join(vault_root, m.asset)):
+                    continue
+                if not os.path.exists(os.path.join(vault_root, m.asset)):
                     errors.append(
                         f"{page}: card {c.id} embeds MISSING asset {m.asset} "
                         "— checked up-front so a later add can't leave Anki half-synced"
+                    )
+                    continue
+                # Cards reference media by basename; two distinct public assets with
+                # the same basename would collide on import (Anki renames the second,
+                # silently breaking the card's <img>). Fail loudly instead.
+                bn = os.path.basename(m.asset)
+                if basenames.setdefault(bn, m.asset) != m.asset:
+                    errors.append(
+                        f"{page}: card {c.id} media basename '{bn}' collides with "
+                        f"{basenames[bn]} — give public assets unique basenames"
                     )
             records[c.id] = {
                 "front": card_lib.render_field(c.front),
@@ -273,6 +288,17 @@ def main(argv):
         f"~/Library/Application Support/Anki2/{a.profile}/collection.anki2"
     )
 
+    # A missing wiki/ almost always means a wrong --vault or a wrong cwd. Bail
+    # loudly: otherwise the scan yields zero cards and a non-dry-run run would plan
+    # every synced note as an orphan and suspend a small collection outright.
+    if not os.path.isdir(os.path.join(vault, "wiki")):
+        print(
+            f"no wiki/ under vault root {os.path.abspath(vault)!r} — "
+            "run from the vault root or pass --vault <path>.",
+            file=sys.stderr,
+        )
+        return 2
+
     # gather + gate pages (only wiki/ can hold cards)
     all_pages = []
     for dp, _d, fs in os.walk(os.path.join(vault, "wiki")):
@@ -396,6 +422,16 @@ def _self_test():
         p2 = reconcile(col, {}, D, threshold=0, confirm_orphans=True)
         want("guard override applies", not p2.blocked)
 
+        # resurrect: A is still in `rec`, but the guard just suspended it — the next
+        # reconcile should un-orphan it (exercises unsuspend_cards + tags.bulk_remove,
+        # which no other branch covers).
+        p = reconcile(col, rec, D)
+        want("resurrect un-orphans", len(p.resurrect) == 1 and A in p.resurrect)
+        nidA = col.find_notes(f"WikiID:{A}")[0]
+        cardA = col.get_card(col.get_note(nidA).card_ids()[0])
+        want("resurrected card unsuspended", cardA.queue != QUEUE_SUSPENDED)
+        want("resurrected card un-tagged", ORPHAN_TAG not in col.get_note(nidA).tags)
+
         want(
             "render_field latex+media",
             card_lib.render_field("a $x$ ![[assets/public/c.png|20]]")
@@ -414,7 +450,8 @@ def _self_test():
                 C: {
                     "front": card_lib.render_field("Define $f(x)$ where A < B & C"),
                     "back": card_lib.render_field(
-                        "See ![[assets/public/d.png|30]].\nBlock: $$E=mc^2$$"
+                        "See ![[assets/public/d.png|30]].\n    indented = True"
+                        "\nBlock: $$E=mc^2$$"
                     ),
                     "deck": "Wiki::A",
                     "source": "obsidian://z",
