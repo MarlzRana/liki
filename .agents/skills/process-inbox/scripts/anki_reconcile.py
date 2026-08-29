@@ -401,6 +401,35 @@ def _self_test():
             card_lib.render_field("a $x$ ![[assets/public/c.png|20]]")
             == 'a \\(x\\) <img src="c.png" width="20">',
         )
+
+        # rich-field round-trip: a card whose rendered fields carry an <img>,
+        # inline+block MathJax and HTML-escaped entities must survive Anki's
+        # store→read cycle byte-identical, or compute_plan would re-flag it as an
+        # `update` on every run (endless churn). Own collection, so it doesn't
+        # perturb the orphan counts above.
+        colC = Collection(os.path.join(D, "roundtrip.anki2"))
+        try:
+            C = "01C7Z8Q9WGENNAVHT3B4E5F6G7"
+            recC = {
+                C: {
+                    "front": card_lib.render_field("Define $f(x)$ where A < B & C"),
+                    "back": card_lib.render_field(
+                        "See ![[assets/public/d.png|30]].\nBlock: $$E=mc^2$$"
+                    ),
+                    "deck": "Wiki::A",
+                    "source": "obsidian://z",
+                    "media": [],
+                    "page": "p.md",
+                }
+            }
+            want("rich card added", len(reconcile(colC, recC, D).add) == 1)
+            pc = reconcile(colC, recC, D)
+            want(
+                "rich fields round-trip (no-op, no churn)",
+                len(pc.noop) == 1 and not pc.update,
+            )
+        finally:
+            colC.close()
     finally:
         col.close()
     print("\nRESULT:", "PASS" if ok else "FAIL")

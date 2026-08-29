@@ -150,6 +150,8 @@ def parse_cards(text, path="<mem>"):
             res.errors.append(
                 f"{path}:{i + 1}: [!card] has an empty front (no question)"
             )
+        if not card.back:
+            res.errors.append(f"{path}:{i + 1}: [!card] has an empty back (no answer)")
         if card_id == MINT:
             res.placeholders.append(card)
         elif ULID_RE.fullmatch(card_id):
@@ -216,8 +218,25 @@ def public_pages(paths, cwd="."):
 
 # --- field transforms --------------------------------------------------------
 _BLOCK_MATH = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
-_INLINE_MATH = re.compile(r"(?<![\$\\])\$(?!\$)(.+?)(?<![\$\\])\$(?!\$)", re.DOTALL)
-_EMBED = re.compile(r"!\[\[\s*(assets/(?:public/)?[^\]|#]+?)\s*(?:\|\s*(\d+)\s*)?\]\]")
+# Inline math, pandoc-style: the opening `$` isn't followed by whitespace, the
+# closing `$` isn't preceded by whitespace and isn't followed by a digit. That
+# last rule keeps currency out — `from $5 to $20` is not math. Not DOTALL, so an
+# inline span can't swallow a newline.
+_INLINE_MATH = re.compile(r"(?<![\$\\])\$(?!\$)(?!\s)(.+?)(?<![\s\$\\])\$(?!\$)(?!\d)")
+# Any `![[assets/…]]` embed: an optional `#fragment` and an optional `|modifier`
+# (a size like `300` / `300x200`, or alt text). Matching every variant — not just
+# a bare `|NNN` — is what lets find_media see (and the privacy guard reject) a
+# private embed written with a modifier, and keeps modifier'd public embeds from
+# being escaped into a card as broken literal text.
+_EMBED = re.compile(
+    r"!\[\[\s*(assets/(?:public/)?[^\]|#]+?)\s*(?:#[^\]|]*)?\s*(?:\|\s*([^\]]*?)\s*)?\]\]"
+)
+
+
+def _embed_width(modifier):
+    """Pixel width from an embed modifier (`300` or `300x200` → `300`), else ''."""
+    m = re.match(r"\d+", modifier or "")
+    return m.group(0) if m else ""
 
 
 def latex_to_mathjax(s):
@@ -248,7 +267,7 @@ def find_media(s):
             MediaRef(
                 token=mt.group(0),
                 asset=asset,
-                width=(mt.group(2) or ""),
+                width=_embed_width(mt.group(2)),
                 public=(norm == "assets/public" or norm.startswith("assets/public/")),
             )
         )
@@ -261,10 +280,10 @@ def render_field(text):
     LaTeX → MathJax and `![[assets/…]]` → `<img>` are rendered first and stashed
     behind NUL sentinels; the remaining prose is HTML-escaped, so stray `<`, `>`,
     `&` in prose (`A < B`, `<EOS>`, `List<T>`) render literally instead of being
-    swallowed as markup; whitespace is flattened; then the rendered math/img is
-    restored verbatim. NFC-normalized to match Anki's canonical field form, which
-    avoids spurious updates when a page carries non-NFC text (common from
-    speech-to-text capture)."""
+    swallowed as markup; intra-line whitespace is collapsed while line breaks
+    become `<br>`; then the rendered math/img is restored verbatim. NFC-normalized
+    to match Anki's canonical field form, which avoids spurious updates when a page
+    carries non-NFC text (common from speech-to-text capture)."""
     saved = []
 
     def stash(rendered):
@@ -275,12 +294,16 @@ def render_field(text):
     s = _INLINE_MATH.sub(lambda m: stash(r"\(" + m.group(1) + r"\)"), s)
 
     def _img(m):
-        w = f' width="{m.group(2)}"' if m.group(2) else ""
+        width = _embed_width(m.group(2))
+        w = f' width="{width}"' if width else ""
         return stash(f'<img src="{os.path.basename(m.group(1).strip())}"{w}>')
 
     s = _EMBED.sub(_img, s)
     s = html.escape(s, quote=False)  # prose only — math/img are stashed away
-    s = " ".join(s.split())
+    # collapse intra-line whitespace but keep line breaks as <br>: Anki renders
+    # fields as HTML, so a bare newline would vanish and mash a multi-line back
+    # onto one line.
+    s = "<br>".join(" ".join(line.split()) for line in s.split("\n"))
     for i, rendered in enumerate(saved):
         s = s.replace(f"\x00{i}\x00", rendered)
     return unicodedata.normalize("NFC", s)
@@ -340,6 +363,11 @@ def _self_test():
     # two errors: the id-less block, and the stray trailing id-comment
     eq("error count", len(r.errors), 2)
     print("     errors:", r.errors)
+    eb = parse_cards(
+        "## Anki Cards\n> [!card]- Q only?\n> <!-- anki: 01ARZ3NDEKTSV4RRFFQ69G5FAV -->\n",
+        "eb.md",
+    )
+    eq("empty back flagged", len(eb.errors) == 1 and "empty back" in eb.errors[0], True)
 
     print("deck_for_page:")
     eq("nested", deck_for_page("wiki/Domain/Sub/Some Page.md"), "Wiki::Domain::Sub")
@@ -369,6 +397,14 @@ def _self_test():
     eq("width", refs[0].width, "300")
     trav = find_media("![[assets/public/../../private/secret.pdf]]")
     eq("traversal is NOT public", trav[0].public, False)
+    mods = find_media(
+        "![[assets/public/a.png|400x300]] ![[assets/public/b.png|a caption]] "
+        "![[assets/private/c.png|thumb]]"
+    )
+    eq("modifier'd embeds all matched", len(mods), 3)
+    eq("WxH width parsed", mods[0].width, "400")
+    eq("alt-text width is empty", mods[1].width, "")
+    eq("private w/ modifier still NOT public", mods[2].public, False)
 
     print("render_field:")
     eq(
@@ -385,6 +421,16 @@ def _self_test():
         "does not escape inside math",
         render_field("$a < b$"),
         r"\(a < b\)",
+    )
+    eq(
+        "currency is not math",
+        render_field("costs from $5 to $20 a month"),
+        "costs from $5 to $20 a month",
+    )
+    eq(
+        "line breaks become <br>",
+        render_field("First line.\nSecond line."),
+        "First line.<br>Second line.",
     )
 
     print("\nRESULT:", "PASS" if ok else "FAIL")

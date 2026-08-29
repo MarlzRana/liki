@@ -63,4 +63,6 @@ The shared value definition is in `value-bar.md` (read it). It defines what make
 - **low-value** — the card is well-made and true but fails the value bar (not central /
   non-obvious / durable). Suggest dropping it, not fixing it.
 - **redundant** — two cards test the same underlying fact or are confusable at review
-  time. Emit one finding naming both `card_id`s and which should go.
+  time. Emit the finding against **one** of them — put that ULID in `body.card_id` (the
+  schema carries a single id) — and name the other card and which of the two should go in
+  `body.reason`.

@@ -145,6 +145,15 @@ def main(argv):
         col_path = a.collection or os.path.expanduser(
             f"~/Library/Application Support/Anki2/{a.profile}/collection.anki2"
         )
+        # Guard before opening: Collection() creates a fresh db at any path, so a
+        # typo'd --collection or a never-opened profile would otherwise make this
+        # report-only audit silently write a new database and compare against it.
+        if not os.path.exists(col_path):
+            print(
+                f"no collection at {col_path} — open the '{a.profile}' profile in Anki once to create it.",
+                file=sys.stderr,
+            )
+            return 2
         vault_cards = {}
         for p in sorted(public):
             source = card_lib.source_uri(p)
@@ -155,11 +164,22 @@ def main(argv):
                     "back": card_lib.render_field(c.back),
                     "source": source,
                 }
-        col = Collection(col_path)
         try:
-            findings.update(scan_anki(vault_cards, col))
-        finally:
-            col.close()
+            col = Collection(col_path)
+        except Exception as e:
+            if not any(
+                w in str(e).lower() for w in ("lock", "in use", "busy", "already open")
+            ):
+                raise
+            print(
+                "collection locked (Anki desktop open on this profile?) — "
+                "reporting the markdown checks only; re-run with the desktop closed."
+            )
+        else:
+            try:
+                findings.update(scan_anki(vault_cards, col))
+            finally:
+                col.close()
 
     return 0 if _report(findings) == 0 else 1
 
