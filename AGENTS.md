@@ -236,6 +236,7 @@ Cards live in a single `## Anki Cards` section, always the **last** section of a
 - **Decks mirror folders.** A page at `wiki/<Domain>/<Sub>/Page.md` maps to the Anki deck `Wiki::<Domain>::<Sub>`.
 - **Binning a card** = delete its callout from the page. On the next reconcile the matching note is **suspended and tagged `wiki::orphaned`** (never deleted, so its scheduling history survives); an orphan-count guard aborts a run that would suspend a suspicious number at once.
 - **Editing a card** = edit the Front/Back in markdown and leave the `<!-- anki: … -->` id alone; the reconciler propagates the new text on the next sync.
+- **Editing an image in place** (same filename, new pixels) is **not** detected — cards reference media by filename and the reconciler diffs card text, not image bytes. To refresh a corrected diagram, rename the asset (updating its embed) or bin and re-add the card.
 </what_syncs>
 
 <wiring>

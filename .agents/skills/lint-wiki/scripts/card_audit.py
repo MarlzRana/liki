@@ -32,6 +32,7 @@ import card_lib
 
 MANAGED_TAG = "wiki::synced"
 ORPHAN_TAG = "wiki::orphaned"
+NOTETYPE = "Wiki Card"  # pipeline's own notetype — scope managed queries to it
 
 
 def find_pages(vault="."):
@@ -45,7 +46,13 @@ def find_pages(vault="."):
 
 def scan_markdown(pages_text, public):
     """pages_text: {path: text}; public: set of card-eligible paths. Pure."""
-    out = {"malformed": [], "unminted": [], "duplicate": [], "privacy": []}
+    out = {
+        "malformed": [],
+        "unminted": [],
+        "duplicate": [],
+        "privacy": [],
+        "media": [],
+    }
     locs = {}  # ulid -> [paths]
     for path, text in pages_text.items():
         pr = card_lib.parse_cards(text, path)
@@ -60,6 +67,15 @@ def scan_markdown(pages_text, public):
             )
         for c in pr.cards:
             locs.setdefault(c.id, []).append(path)
+            # Preview a reconcile-blocker the reconciler would abort on: a public
+            # card embedding a private (non-`assets/public/`) asset.
+            if path in public:
+                for m in card_lib.find_media(c.front + "\n" + c.back):
+                    if not m.public:
+                        out["media"].append(
+                            f"{path}: card {c.id} embeds non-public asset {m.asset} "
+                            "— reconcile would abort"
+                        )
     for ulid, where in sorted(locs.items()):
         if len(where) > 1:
             out["duplicate"].append(f"{ulid}: on {', '.join(where)}")
@@ -69,9 +85,11 @@ def scan_markdown(pages_text, public):
 def scan_anki(vault_cards, col):
     """vault_cards: {ulid: {page, front, back, source}} with the fields already
     rendered exactly as the reconciler renders them. Needs an open collection."""
-    out = {"orphaned": [], "hand_edited": [], "stale": []}
+    out = {"orphaned": [], "hand_edited": [], "unsynced": []}
     managed = {}  # guid -> note
-    for nid in col.find_notes(f"tag:{MANAGED_TAG}"):
+    # Scope to the pipeline's own notetype so a foreign note that happens to carry
+    # `wiki::synced` isn't mistaken for a managed card.
+    for nid in col.find_notes(f'tag:{MANAGED_TAG} "note:{NOTETYPE}"'):
         n = col.get_note(nid)
         managed[n.guid] = n
     for gid, note in managed.items():
@@ -85,16 +103,17 @@ def scan_anki(vault_cards, col):
             out["hand_edited"].append(
                 f"{ulid} ({r['page']}): matches no note in Anki — a new unsynced card or a hand-edited id"
             )
-        # Compare rendered Front/Back/Source to the synced note — the same predicate
-        # the reconciler uses — not page mtime, which flags every card on a page
-        # after any unrelated prose/frontmatter edit.
+        # Compare rendered Front/Back/Source to the synced note. This catches a card
+        # whose markdown was EDITED but not yet reconciled — not semantic "the page
+        # drifted from the card" (a judgment call left to the broader lint /
+        # card-quality reviewer, which read the prose).
         elif (
             note["Front"] != r["front"]
             or note["Back"] != r["back"]
             or note["Source"] != r["source"]
         ):
-            out["stale"].append(
-                f"{ulid} ({r['page']}): rendered card differs from the synced note — answer drifted"
+            out["unsynced"].append(
+                f"{ulid} ({r['page']}): card text differs from the synced note — reconcile to push it"
             )
     return out
 
@@ -104,9 +123,10 @@ _TITLES = {
     "unminted": "UNMINTED PLACEHOLDERS (MINT left in place)",
     "duplicate": "DUPLICATE IDS (same ULID on 2+ blocks)",
     "privacy": "PRIVACY (cards section on a non-public page)",
+    "media": "PRIVATE MEDIA IN A PUBLIC CARD (reconcile would abort)",
     "orphaned": "ORPHANED IN ANKI (pending suspend)",
     "hand_edited": "UNKNOWN IDS (new-unsynced or hand-edited)",
-    "stale": "STALE ANSWERS (rendered card differs from the synced note)",
+    "unsynced": "UNSYNCED CARD EDITS (card text changed but not reconciled)",
 }
 
 
@@ -174,15 +194,21 @@ def main(argv):
                 w in str(e).lower() for w in ("lock", "in use", "busy", "already open")
             ):
                 raise
+            # Report the markdown checks, but DON'T exit clean: the caller asked for
+            # --with-anki and the Anki-cross layer never ran, so a green exit here
+            # would be a false all-clear. Signal it distinctly.
+            _report(findings)
             print(
-                "collection locked (Anki desktop open on this profile?) — "
-                "reporting the markdown checks only; re-run with the desktop closed."
+                "\ncollection locked (Anki desktop open on this profile?) — the Anki-cross "
+                "checks (orphaned / unknown / unsynced) did NOT run; re-run with the "
+                "desktop closed.",
+                file=sys.stderr,
             )
-        else:
-            try:
-                findings.update(scan_anki(vault_cards, col))
-            finally:
-                col.close()
+            return 2
+        try:
+            findings.update(scan_anki(vault_cards, col))
+        finally:
+            col.close()
 
     return 0 if _report(findings) == 0 else 1
 

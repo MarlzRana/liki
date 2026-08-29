@@ -119,8 +119,8 @@ uv run --with anki==<anki-version> python .agents/skills/lint-wiki/scripts/card_
 ```
 
 - **Malformed / unminted / duplicate ids** — these block reconcile; flag them for fixing before the next sync.
-- **Privacy** — a `## Anki Cards` section on a non-git-public or `.local.md` page must not exist.
-- **Stale** — the page changed after the card last synced, so the answer may have drifted. Propose an updated Front/Back (consent-gated) — leave the `<!-- anki: … -->` id untouched; the next reconcile propagates the change.
+- **Privacy** — a `## Anki Cards` section on a non-git-public or `.local.md` page must not exist; nor may a public card embed a private (non-`assets/public/`) asset (the reconciler would abort — the audit previews it).
+- **Unsynced edits** — the card's markdown text differs from what's in Anki: it was edited but not reconciled. Run the reconciler to push it. (This is a deterministic text diff, *not* a semantic "the page drifted from the card" signal — that judgment belongs to the prose-level checks above and the card-quality reviewer.)
 - **Hand-edited / orphaned** — an id matching no note (a hand-edit, or a not-yet-synced new card), or a `wiki::synced` note matching no card (a pending suspend).
 
 Report, don't auto-fix — same as every other check.

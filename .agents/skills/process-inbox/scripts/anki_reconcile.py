@@ -353,6 +353,50 @@ def main(argv):
         col.close()
 
 
+def _build_records_test():
+    """build_records is the privacy/integrity enforcement point: it aborts the run
+    on a public card embedding a private asset, a missing asset, a basename
+    collision, or a duplicate ULID. Exercise those aborts over a temp vault."""
+    import tempfile
+
+    good = True
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "wiki"))
+        os.makedirs(os.path.join(d, "assets", "public", "sub"))
+        for rel in ("assets/public/ok.png", "assets/public/sub/ok.png"):
+            open(os.path.join(d, rel), "w").close()
+        u = [
+            "01AAAAAAAAAAAAAAAAAAAAAAAA",
+            "01BBBBBBBBBBBBBBBBBBBBBBBB",
+            "01CCCCCCCCCCCCCCCCCCCCCCCC",
+            "01DDDDDDDDDDDDDDDDDDDDDDDD",
+        ]
+
+        def _card(q, body, cid):
+            return f"> [!card]- {q}\n> {body}\n> <!-- anki: {cid} -->\n\n"
+
+        page = (
+            "## Anki Cards\n\n"
+            + _card("priv", "e ![[assets/secret.png]]", u[0])  # private → abort
+            + _card("missing", "e ![[assets/public/gone.png]]", u[1])  # missing → abort
+            + _card("baseA", "e ![[assets/public/ok.png]]", u[2])  # basename ok.png
+            + _card("baseB", "e ![[assets/public/sub/ok.png]]", u[3])  # collides
+        )
+        with open(os.path.join(d, "wiki", "p.md"), "w", encoding="utf-8") as fh:
+            fh.write(page)
+        _records, errs = build_records(["wiki/p.md"], d)
+        blob = "\n".join(errs)
+        checks = {
+            "private embed aborts": "PRIVATE asset" in blob,
+            "missing embed aborts": "MISSING asset" in blob,
+            "basename collision aborts": "collides" in blob,
+        }
+        for name, cond in checks.items():
+            good = good and cond
+            print(f"  [{'ok' if cond else 'FAIL'}] {name}")
+    return good
+
+
 # --- self-test (e2e against a throwaway collection) --------------------------
 def _self_test():
     import shutil
@@ -368,6 +412,9 @@ def _self_test():
         nonlocal ok
         ok = ok and cond
         print(f"  [{'ok' if cond else 'FAIL'}] {name}")
+
+    print("build_records (privacy/integrity aborts):")
+    ok = _build_records_test() and ok
 
     A = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
     B = "01BX5ZZKBKACTAV9WEVGEMMVRZ"
