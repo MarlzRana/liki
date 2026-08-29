@@ -91,8 +91,12 @@ def main(argv):
             continue
         new, minted = mint_in_text(text, taken)
         if minted:
-            with open(p, "w", encoding="utf-8") as fh:
+            # Atomic write: a crash / disk-full mid-write must not truncate the
+            # user's note. Write a sibling temp file, then rename over the original.
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(new)
+            os.replace(tmp, p)
             total += len(minted)
             print(f"{p}: minted {len(minted)}")
     print(f"minted {total} id(s) across {len(pages)} page(s)")

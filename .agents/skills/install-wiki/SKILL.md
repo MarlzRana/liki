@@ -261,6 +261,12 @@ Wrap up. The pipeline code — the scripts, the `.aeview/` reviewers, and the
 `.obsidian/snippets/anki-cards.css` styling — already arrived with the clone; this step
 only installs the runtime and wires it up.
 
+**How the skills know it's on:** because the pipeline files ship with the template, the
+skills can't key off their presence. Instead they check for a `.anki-enabled` marker at the
+vault root, created by the final sub-step below. So completing this step is what turns the
+pipeline on; declining leaves the marker absent and every Anki phase in `process-inbox` /
+`lint-wiki` self-skips.
+
 1. **Install Anki desktop and pin the backend to match.** The reconciler talks to the
    collection through the `anki` Python package, whose version **must equal the desktop
    app's** or the collection format can mismatch.
@@ -292,11 +298,17 @@ only installs the runtime and wires it up.
    different name or path, pass `--profile <name>` / `--collection <path>` to the reconciler.
 4. **Enable the card-callout styling.** In Obsidian: *Settings → Appearance → CSS snippets*
    → toggle **anki-cards** on (hit the reload icon if it isn't listed yet).
-5. **Verify (optional).** With Anki desktop **closed**, a dry-run should report an empty,
-   clean plan on a fresh vault:
+5. **Verify.** With Anki desktop **closed**, a dry-run should report an empty, clean plan on
+   a fresh vault:
    ```bash
    uv run --with anki==<version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run
    ```
+6. **Flip it on.** Only once the verify above is clean, create the marker the skills gate on:
+   ```bash
+   touch .anki-enabled   # process-inbox / lint-wiki run their Anki phases only when this exists
+   ```
+   Leave it absent to keep the pipeline off. It's a normal tracked file, so committing it
+   records that this vault uses the Anki pipeline.
 
 From here it's automatic: `process-inbox` generates and reconciles cards (its steps 7 and
 11), and `lint-wiki` health-checks them (its Card Health check). Add a `log.md` line noting

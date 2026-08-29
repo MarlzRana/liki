@@ -19,11 +19,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import unicodedata
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import card_lib  # noqa: E402
+import card_lib
 
 NOTETYPE = "Wiki Card"
 MANAGED_TAG = "wiki::synced"
@@ -33,18 +32,8 @@ QUEUE_SUSPENDED = -1
 
 
 # --- markdown side -----------------------------------------------------------
-def render_field(text):
-    """Markdown → an Anki field: LaTeX→MathJax, media embeds → <img>, flatten.
-
-    (TODO for the dogfood: HTML-escape stray < > & in prose; ML answers rarely
-    contain them, and escaping interacts with the injected <img>/MathJax.)"""
-    s = card_lib.latex_to_mathjax(text)
-    for ref in card_lib.find_media(text):
-        w = f' width="{ref.width}"' if ref.width else ""
-        s = s.replace(ref.token, f'<img src="{os.path.basename(ref.asset)}"{w}>')
-    # NFC to match Anki's canonical field form — avoids spurious updates when a
-    # page carries non-NFC text (common from speech-to-text capture).
-    return unicodedata.normalize("NFC", " ".join(s.split()))
+# `render_field` (markdown → Anki HTML field) lives in card_lib — it's pure and
+# stdlib-only, so card_audit shares the exact same renderer for its stale check.
 
 
 def build_records(pages, vault_root):
@@ -73,9 +62,14 @@ def build_records(pages, vault_root):
                         f"{page}: card {c.id} embeds PRIVATE asset {m.asset} "
                         "— refusing to put private content in a public card"
                     )
+                elif not os.path.exists(os.path.join(vault_root, m.asset)):
+                    errors.append(
+                        f"{page}: card {c.id} embeds MISSING asset {m.asset} "
+                        "— checked up-front so a later add can't leave Anki half-synced"
+                    )
             records[c.id] = {
-                "front": render_field(c.front),
-                "back": render_field(c.back),
+                "front": card_lib.render_field(c.front),
+                "back": card_lib.render_field(c.back),
                 "deck": deck,
                 "source": source,
                 "page": page,
@@ -252,7 +246,7 @@ def _open_collection(path):
 
     try:
         return Collection(path)
-    except Exception as e:  # noqa: BLE001 — best-effort lock detection
+    except Exception as e:
         msg = str(e).lower()
         if any(w in msg for w in ("lock", "in use", "busy", "already open")):
             print(
@@ -306,7 +300,11 @@ def main(argv):
             print("  " + e, file=sys.stderr)
         return 2
 
-    if not a.dry_run and not os.path.exists(col_path):
+    # Reject a missing collection in ALL modes, including --dry-run: Anki's
+    # Collection() creates a fresh db at any path, so a typo'd --collection or a
+    # never-opened profile would otherwise make a dry-run silently write a new
+    # database while reporting nothing was changed.
+    if not os.path.exists(col_path):
         print(
             f"no collection at {col_path} — open the '{a.profile}' profile in Anki once to create it.",
             file=sys.stderr,
@@ -332,6 +330,7 @@ def main(argv):
 # --- self-test (e2e against a throwaway collection) --------------------------
 def _self_test():
     import shutil
+
     from anki.collection import Collection
 
     D = "/tmp/anki-reconcile-test"
@@ -399,7 +398,7 @@ def _self_test():
 
         want(
             "render_field latex+media",
-            render_field("a $x$ ![[assets/public/c.png|20]]")
+            card_lib.render_field("a $x$ ![[assets/public/c.png|20]]")
             == 'a \\(x\\) <img src="c.png" width="20">',
         )
     finally:

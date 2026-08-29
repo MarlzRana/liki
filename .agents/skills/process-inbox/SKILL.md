@@ -60,16 +60,18 @@ For each item:
 
 ### 7. Generate Anki cards (Phase 2, optional)
 
-**Only if the Anki flashcard pipeline is set up** — the optional step in `install-wiki` that installs the `.aeview/` reviewers and pins Anki. If `.aeview/reviewers/` isn't present, skip straight to Archive. See `<anki_flashcards>` in AGENTS.md for the two-store model.
+**Only if the Anki flashcard pipeline was enabled** during `install-wiki` (its optional Anki step). The pipeline's files — the scripts and `.aeview/reviewers/` — ship with the template, so their mere presence proves nothing; `install-wiki` writes a `.anki-enabled` marker at the vault root **only** when the user opts in. If `test -f .anki-enabled` fails (marker absent), skip straight to Archive. See `<anki_flashcards>` in AGENTS.md for the two-store model.
 
 Run this **only after every page is in its final state** (all writes/merges/splits done, index and log updated). Generate from the session **manifest** — the pages you created or substantially rewrote (a typo fix doesn't count).
 
 1. **Gate.** Keep only manifest pages that are **git-public** and not `*.local.md` (the same `git check-ignore` test `card_lib.public_pages` uses) — i.e. pages in a domain the owner made public during `install-wiki`. Skip stubs, link-dumps, logs, and reference-only tables — not everything true is worth memorising. The gate is git-derived, so it tracks the owner's public/private choice automatically; a domain made public later is picked up with no code change. **Never** generate from a private domain.
 2. **Draft.** For each qualifying page, draft candidate cards into a scratch `## Anki Cards` block on the page, following the rubric in `.aeview/reviewers/` (the `_shared/value-bar.md` bar + the two reviewer prompts): one fact per card; mechanisms / tradeoffs / contrasts; faithful to the page **and its git-public linked pages only**. Give each card `<!-- anki: MINT -->`.
-3. **Judge (aeview panel).** Diff the candidate block(s) and run both reviewers — they read the named source page from the repo (read-only) for context, so only the diff goes over stdin:
+3. **Judge (aeview panel).** Some of `<pages>` are often **newly created** this session, and `git diff` omits untracked files — so mark them intent-to-add first, or their cards never reach the panel and the review is silently skipped. Then diff and run both reviewers, which read the named source page from the repo (read-only) for context, so only the diff goes over stdin:
    ```bash
+   git add -N -- <pages>          # intent-to-add, so brand-new pages appear in the diff
    git diff -- <pages> | aeview run --scope patch:- --reviewers card-quality,coverage --json
    ```
+   Treat an **empty patch as a bug, not an approval**: it means no card diff reached the panel (nothing changed/added), so no review happened — investigate rather than proceeding to mint.
 4. **Revise to `approve`.** On `needs-attention` (exit 1), read `report.json`: fix / split / drop / dedupe the flagged cards, add cards for any `uncovered` gaps, then re-run. Repeat until `approve` (exit 0) or a small max-round cap. Resolve any contradiction (a card dropped `low-value` vs a topic flagged `uncovered`) with one judgement.
 5. **Write + mint.** Once approved, leave each `## Anki Cards` block on its page (last section, after any `> Source:` footer) and mint the ids — this replaces every `MINT` placeholder with a fresh vault-unique ULID:
    ```bash
@@ -98,7 +100,7 @@ Review the diff (`git status` / `git diff`) and commit it on the default branch,
 
 ### 11. Reconcile to Anki (Phase 3, optional)
 
-**Only if the Anki pipeline is set up** (see step 7). Deterministic — no LLM judgement. Push the vault's cards into the local Anki collection. **Dry-run first**, and never let this fail the run (the cards are already durable in the committed pages).
+**Only if the Anki pipeline was enabled** (the `.anki-enabled` marker — see step 7). Deterministic — no LLM judgement. Push the vault's cards into the local Anki collection. **Dry-run first**, and never let this fail the run (the cards are already durable in the committed pages).
 
 ```bash
 uv run --with anki==<anki-version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run

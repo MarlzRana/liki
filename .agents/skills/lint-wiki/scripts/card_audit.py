@@ -28,7 +28,7 @@ sys.path.insert(
         "scripts",
     ),
 )
-import card_lib  # noqa: E402
+import card_lib
 
 MANAGED_TAG = "wiki::synced"
 ORPHAN_TAG = "wiki::orphaned"
@@ -66,26 +66,35 @@ def scan_markdown(pages_text, public):
     return out
 
 
-def scan_anki(vault_ulids, col):
-    """vault_ulids: {ulid: (page, page_mtime)}. Needs an open collection."""
+def scan_anki(vault_cards, col):
+    """vault_cards: {ulid: {page, front, back, source}} with the fields already
+    rendered exactly as the reconciler renders them. Needs an open collection."""
     out = {"orphaned": [], "hand_edited": [], "stale": []}
     managed = {}  # guid -> note
     for nid in col.find_notes(f"tag:{MANAGED_TAG}"):
         n = col.get_note(nid)
         managed[n.guid] = n
     for gid, note in managed.items():
-        if gid not in vault_ulids and ORPHAN_TAG not in note.tags:
+        if gid not in vault_cards and ORPHAN_TAG not in note.tags:
             out["orphaned"].append(
                 f"{gid}: in Anki (wiki::synced) but no card in the vault — pending suspend"
             )
-    for ulid, (page, mtime) in vault_ulids.items():
-        if ulid not in managed:
+    for ulid, r in vault_cards.items():
+        note = managed.get(ulid)
+        if note is None:
             out["hand_edited"].append(
-                f"{ulid} ({page}): matches no note in Anki — a new unsynced card or a hand-edited id"
+                f"{ulid} ({r['page']}): matches no note in Anki — a new unsynced card or a hand-edited id"
             )
-        elif mtime > managed[ulid].mod:  # note.mod is epoch seconds
+        # Compare rendered Front/Back/Source to the synced note — the same predicate
+        # the reconciler uses — not page mtime, which flags every card on a page
+        # after any unrelated prose/frontmatter edit.
+        elif (
+            note["Front"] != r["front"]
+            or note["Back"] != r["back"]
+            or note["Source"] != r["source"]
+        ):
             out["stale"].append(
-                f"{ulid} ({page}): page modified after last sync — answer may be stale"
+                f"{ulid} ({r['page']}): rendered card differs from the synced note — answer drifted"
             )
     return out
 
@@ -97,7 +106,7 @@ _TITLES = {
     "privacy": "PRIVACY (cards section on a non-public page)",
     "orphaned": "ORPHANED IN ANKI (pending suspend)",
     "hand_edited": "UNKNOWN IDS (new-unsynced or hand-edited)",
-    "stale": "STALE ANSWERS (page changed after last sync)",
+    "stale": "STALE ANSWERS (rendered card differs from the synced note)",
 }
 
 
@@ -136,14 +145,19 @@ def main(argv):
         col_path = a.collection or os.path.expanduser(
             f"~/Library/Application Support/Anki2/{a.profile}/collection.anki2"
         )
-        vault_ulids = {}
+        vault_cards = {}
         for p in sorted(public):
-            mtime = os.path.getmtime(os.path.join(a.vault, p))
+            source = card_lib.source_uri(p)
             for c in card_lib.parse_cards(pages_text[p], p).cards:
-                vault_ulids[c.id] = (p, mtime)
+                vault_cards[c.id] = {
+                    "page": p,
+                    "front": card_lib.render_field(c.front),
+                    "back": card_lib.render_field(c.back),
+                    "source": source,
+                }
         col = Collection(col_path)
         try:
-            findings.update(scan_anki(vault_ulids, col))
+            findings.update(scan_anki(vault_cards, col))
         finally:
             col.close()
 

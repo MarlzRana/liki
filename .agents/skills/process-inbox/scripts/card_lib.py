@@ -11,6 +11,7 @@ Contents:
   - the git-public gate (which pages may hold cards)
   - the `obsidian://` Source URI
   - LaTeX → MathJax and media-embed extraction
+  - the markdown → Anki HTML field renderer (`render_field`)
 
 Run directly for a self-test:
     /usr/bin/python3 .agents/skills/process-inbox/scripts/card_lib.py
@@ -18,9 +19,11 @@ Run directly for a self-test:
 
 from __future__ import annotations
 
+import html
 import os
 import re
 import subprocess
+import unicodedata
 import urllib.parse
 from dataclasses import dataclass, field
 
@@ -40,7 +43,7 @@ SECTION_RE = re.compile(r"^##\s+Anki\s+Cards\s*$")
 HEADING_RE = re.compile(r"^#{1,2}\s")  # a `#`/`##` heading ends the section
 ULID_RE = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")  # Crockford base32, 26 chars
 
-_MARKER = re.compile(r"^>\s*\[!card\]-?\s*(.*)$")  # `> [!card]- <front>`
+_MARKER = re.compile(r"^>\s*\[!card\][+-]?\s*(.*)$")  # `> [!card]`/`-`/`+` <front>
 _CONT = re.compile(r"^>\s?(.*)$")  # any `>` continuation line
 _IDLINE = re.compile(r"^>\s*<!--\s*anki:\s*(\S+)\s*-->\s*$")  # `> <!-- anki: <id> -->`
 
@@ -172,23 +175,33 @@ def deck_for_page(path):
 # --- obsidian:// Source URI --------------------------------------------------
 def source_uri(path, vault=None):
     """A back-link to the page. `file` is the vault-root-relative path (keeps the
-    inner `wiki/`), url-encoded, extension dropped. `vault` defaults to vault_name()."""
+    inner `wiki/`), url-encoded, extension dropped. The `vault` component is
+    url-encoded too — vault folder names can contain spaces (`My Vault`), which
+    would otherwise produce an invalid `obsidian://` URI. `vault` defaults to
+    vault_name()."""
     rel = path.removesuffix(".md")
     enc = urllib.parse.quote(rel.replace(os.sep, "/"), safe="")
-    return f"obsidian://open?vault={vault or vault_name()}&file={enc}"
+    vault_enc = urllib.parse.quote(vault or vault_name(), safe="")
+    return f"obsidian://open?vault={vault_enc}&file={enc}"
 
 
 # --- git-public gate ---------------------------------------------------------
 def public_pages(paths, cwd="."):
     """Return the subset of `paths` that are card-eligible: committed to git
     (not ignored) and not a `*.local.md` file. Mirrors asset_audit.py's method —
-    `git check-ignore --stdin` — so it needs no hardcoded domain name."""
+    `git check-ignore` — so it needs no hardcoded domain name.
+
+    Runs with `-z` (NUL-delimited I/O) and `core.quotePath=false` so a non-ASCII
+    page path (e.g. `wiki/Café.md`) still string-matches the input. Without this,
+    git C-quotes such paths in its output (`"wiki/Caf\\303\\251.md"`), the match
+    fails, and a genuinely-private page would be classified public — a privacy
+    gate must fail *closed*, not open."""
     candidates = [p for p in paths if not p.endswith(".local.md")]
     if not candidates:
         return set()
     proc = subprocess.run(
-        ["git", "check-ignore", "--stdin"],
-        input="\n".join(candidates),
+        ["git", "-c", "core.quotePath=false", "check-ignore", "-z", "--stdin"],
+        input="".join(p + "\0" for p in candidates),
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -197,7 +210,7 @@ def public_pages(paths, cwd="."):
         raise RuntimeError(
             "git check-ignore failed (run from the repo):\n" + proc.stderr
         )
-    ignored = {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+    ignored = {s for s in proc.stdout.split("\0") if s}
     return {p for p in candidates if p not in ignored}
 
 
@@ -227,15 +240,50 @@ def find_media(s):
     out = []
     for mt in _EMBED.finditer(s):
         asset = mt.group(1).strip()
+        # Normalize before the public-prefix test so a traversal path such as
+        # `assets/public/../../private/x.pdf` can't masquerade as public and leak
+        # a private file into the collection.
+        norm = os.path.normpath(asset).replace(os.sep, "/")
         out.append(
             MediaRef(
                 token=mt.group(0),
                 asset=asset,
                 width=(mt.group(2) or ""),
-                public=asset.startswith("assets/public/"),
+                public=(norm == "assets/public" or norm.startswith("assets/public/")),
             )
         )
     return out
+
+
+def render_field(text):
+    """Render one card Front/Back into an Anki HTML field.
+
+    LaTeX → MathJax and `![[assets/…]]` → `<img>` are rendered first and stashed
+    behind NUL sentinels; the remaining prose is HTML-escaped, so stray `<`, `>`,
+    `&` in prose (`A < B`, `<EOS>`, `List<T>`) render literally instead of being
+    swallowed as markup; whitespace is flattened; then the rendered math/img is
+    restored verbatim. NFC-normalized to match Anki's canonical field form, which
+    avoids spurious updates when a page carries non-NFC text (common from
+    speech-to-text capture)."""
+    saved = []
+
+    def stash(rendered):
+        saved.append(rendered)
+        return f"\x00{len(saved) - 1}\x00"
+
+    s = _BLOCK_MATH.sub(lambda m: stash(r"\[" + m.group(1) + r"\]"), text)
+    s = _INLINE_MATH.sub(lambda m: stash(r"\(" + m.group(1) + r"\)"), s)
+
+    def _img(m):
+        w = f' width="{m.group(2)}"' if m.group(2) else ""
+        return stash(f'<img src="{os.path.basename(m.group(1).strip())}"{w}>')
+
+    s = _EMBED.sub(_img, s)
+    s = html.escape(s, quote=False)  # prose only — math/img are stashed away
+    s = " ".join(s.split())
+    for i, rendered in enumerate(saved):
+        s = s.replace(f"\x00{i}\x00", rendered)
+    return unicodedata.normalize("NFC", s)
 
 
 # --- self-test ---------------------------------------------------------------
@@ -253,7 +301,7 @@ $$ E = mc^2 $$
 > Paris.
 > <!-- anki: 01ARZ3NDEKTSV4RRFFQ69G5FAV -->
 
-> [!card]- Which placeholder does mint_ids replace?
+> [!card]+ Which placeholder does mint_ids replace?
 > The MINT token, with a freshly generated ULID.
 > <!-- anki: MINT -->
 
@@ -282,7 +330,13 @@ def _self_test():
     eq("well-formed count", len(r.cards), 1)
     eq("placeholder count", len(r.placeholders), 1)
     eq("first card id", r.cards[0].id, "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    # the placeholder card uses the expanded `[!card]+` fold marker
     eq("placeholder is MINT", r.placeholders[0].id, MINT)
+    eq(
+        "`[!card]+` parses (front captured)",
+        r.placeholders[0].front.startswith("Which"),
+        True,
+    )
     # two errors: the id-less block, and the stray trailing id-comment
     eq("error count", len(r.errors), 2)
     print("     errors:", r.errors)
@@ -297,6 +351,11 @@ def _self_test():
         source_uri("wiki/Domain/Some Page.md", vault="wiki"),
         "obsidian://open?vault=wiki&file=wiki%2FDomain%2FSome%20Page",
     )
+    eq(
+        "encodes vault name with spaces",
+        source_uri("wiki/A.md", vault="My Vault"),
+        "obsidian://open?vault=My%20Vault&file=wiki%2FA",
+    )
 
     print("latex_to_mathjax:")
     eq("inline+block", latex_to_mathjax(r"a $x$ and $$y$$ b"), r"a \(x\) and \[y\] b")
@@ -308,6 +367,25 @@ def _self_test():
     eq("count", len(refs), 2)
     eq("public flag", (refs[0].public, refs[1].public), (True, False))
     eq("width", refs[0].width, "300")
+    trav = find_media("![[assets/public/../../private/secret.pdf]]")
+    eq("traversal is NOT public", trav[0].public, False)
+
+    print("render_field:")
+    eq(
+        "latex+media",
+        render_field("a $x$ ![[assets/public/c.png|20]]"),
+        'a \\(x\\) <img src="c.png" width="20">',
+    )
+    eq(
+        "escapes stray html in prose",
+        render_field("if A < B and x>0 & done"),
+        "if A &lt; B and x&gt;0 &amp; done",
+    )
+    eq(
+        "does not escape inside math",
+        render_field("$a < b$"),
+        r"\(a < b\)",
+    )
 
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return ok

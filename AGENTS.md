@@ -212,7 +212,7 @@ Wiki pages have frontmatter compatible with Obsidian's Dataview plugin. The owne
 </tooling>
 
 <anki_flashcards>
-**Optional.** The template ships a wiki → Anki spaced-repetition pipeline, enabled via the optional step in `install-wiki`. If it wasn't set up (`.aeview/reviewers/` absent, Anki not pinned), ignore this block — the wiki works fully without it.
+**Optional.** The template ships a wiki → Anki spaced-repetition pipeline, enabled via the optional step in `install-wiki`. The pipeline's files (scripts, `.aeview/reviewers/`, the CSS snippet) ship with the template, so their presence does **not** mean it's on: it's enabled only once install-wiki writes a `.anki-enabled` marker at the vault root (and pins the Anki version). If `.anki-enabled` is absent, the pipeline is off — ignore this block; the wiki works fully without it.
 
 **Two stores, no sidecar.** The markdown page owns each card's *content and identity*; the Anki collection owns only the *scheduling* (intervals, ease, due dates). There is no database or sidecar file — the pages are the source of truth, and a deterministic reconciler makes the collection match them.
 

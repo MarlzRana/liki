@@ -111,7 +111,7 @@ Two categories are printed as `(info)` rather than as defects, because they are 
 
 ### 8. Card Health (Anki pipeline, optional)
 
-**Only if the Anki flashcard pipeline is set up** (the optional step in `install-wiki`). If the scripts below aren't present, skip this check. See `<anki_flashcards>` in AGENTS.md for the model. Check the `## Anki Cards` blocks and their sync state. The markdown-structure checks are stdlib; the Anki-cross checks need the pinned venv (run with Anki desktop closed, or they hit the collection lock):
+**Only if the Anki flashcard pipeline was enabled** during `install-wiki` (its optional Anki step). The scripts ship with the template, so presence proves nothing — `install-wiki` writes a `.anki-enabled` marker at the vault root only when the user opts in; skip this check if `test -f .anki-enabled` fails. See `<anki_flashcards>` in AGENTS.md for the model. Check the `## Anki Cards` blocks and their sync state. The markdown-structure checks are stdlib; the Anki-cross checks need the pinned venv (run with Anki desktop closed, or they hit the collection lock):
 
 ```bash
 /usr/bin/python3 .agents/skills/lint-wiki/scripts/card_audit.py
@@ -148,4 +148,4 @@ If the user approves fixes:
 2. Update `index.md` and `log.md`
 3. Run `qmd update && qmd embed`
 4. Review the diff (`git status` / `git diff`) and commit it using the `commit` skill for the message
-5. If any **card text** changed (e.g. a stale-answer fix) and the Anki pipeline is set up, run the reconciler so the edit reaches Anki: `uv run --with anki==<anki-version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run` (then apply with the desktop closed)
+5. If any **card text** changed (e.g. a stale-answer fix) and the Anki pipeline was enabled (`.anki-enabled` present), run the reconciler so the edit reaches Anki: `uv run --with anki==<anki-version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run` (then apply with the desktop closed)
