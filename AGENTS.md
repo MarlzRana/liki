@@ -184,7 +184,7 @@ Keep it minimal. Only `date`, `domain`, and `tags`. Don't over-tag.
 
 <index>
 - `index.md` — human-browsable table of contents organized by domain
-- Each entry: `[[wiki-link]]` — one-line description
+- **Each entry is a path-qualified wiki-link with a display alias** — `[[wiki/<Domain>/<…>/<Page>|<Page>]]` — followed by a one-line description. Use the full vault-root-relative path, **not** a bare `[[Page]]`: `process-inbox` archives every processed note to `inbox/processed/` under the same basename, so a bare link is ambiguous and Obsidian may resolve it to the archived capture instead of the wiki page. The alias keeps the index readable.
 - Update after every processing session
 </index>
 

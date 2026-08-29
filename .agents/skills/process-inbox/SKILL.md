@@ -55,7 +55,7 @@ For each item:
 
 ### 6. Update Index and Log
 
-- Update `index.md` with new/modified pages
+- Update `index.md` with new/modified pages. **Link each entry with a path-qualified wiki-link + display alias** — `[[wiki/<Domain>/<…>/<Page>|<Page>]]`, not a bare `[[Page]]`. Because the note is archived to `inbox/processed/` (step 8) under the same basename, a bare `[[Page]]` is ambiguous and Obsidian may resolve it to the archived capture; the explicit `wiki/…` path pins it to the page while the alias keeps the index readable.
 - Append entries to `log.md` with format: `## [YYYY-MM-DD] ingest | description`
 
 ### 7. Generate Anki cards (Phase 2, optional)
