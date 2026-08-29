@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "missing_point": {
+      "type": "string",
+      "description": "the high-value point on the page that no card tests"
+    },
+    "suggested_fix": {
+      "type": "string",
+      "description": "the card that would cover it — a one-line Front/Back sketch"
+    }
+  },
+  "required": ["missing_point", "suggested_fix"],
+  "additionalProperties": false
+}

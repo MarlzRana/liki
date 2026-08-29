@@ -1,0 +1,10 @@
+/* Anki flashcard callouts — the `> [!card]-` blocks the wiki→Anki pipeline appends
+   to a page's `## Anki Cards` section. Folded by default, so each page ends with a
+   tidy list of questions; click one to reveal the answer. The `<!-- anki: … -->`
+   id comment is hidden in reading mode, so the machinery stays invisible.
+
+   Enable in: Settings → Appearance → CSS snippets → toggle "anki-cards". */
+.callout[data-callout="card"] {
+  --callout-color: 124, 58, 237;          /* violet — distinct from note/tip/etc. */
+  --callout-icon: lucide-graduation-cap;
+}

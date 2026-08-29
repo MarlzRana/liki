@@ -109,6 +109,22 @@ This checks every rule above in one pass, scanning both `wiki/` and `inbox/` for
 
 Two categories are printed as `(info)` rather than as defects, because they are usually deliberate: assets with no reference anywhere, and assets referenced only by an archived `inbox/processed/` note. **Check `log.md` before reporting these** — past lints have explicitly accepted some (superseded diagrams the owner chose to keep, and captures left unembedded on purpose because they contain a bystander's likeness or are text overlaid on an unrelated photo). Re-flagging those each lint is noise.
 
+### 8. Card Health (Anki pipeline, optional)
+
+**Only if the Anki flashcard pipeline was enabled** during `install-wiki` (its optional Anki step). The scripts ship with the template, so presence proves nothing — `install-wiki` writes a `.anki-enabled` marker at the vault root only when the user opts in; skip this check if `test -f .anki-enabled` fails. See `<anki_flashcards>` in AGENTS.md for the model. Check the `## Anki Cards` blocks and their sync state. The markdown-structure checks are stdlib; the Anki-cross checks need the pinned venv (run with Anki desktop closed, or they hit the collection lock):
+
+```bash
+/usr/bin/python3 .agents/skills/lint-wiki/scripts/card_audit.py
+uv run --with anki==<anki-version> python .agents/skills/lint-wiki/scripts/card_audit.py --with-anki
+```
+
+- **Malformed / unminted / duplicate ids** — these block reconcile; flag them for fixing before the next sync.
+- **Privacy** — a `## Anki Cards` section on a non-git-public or `.local.md` page must not exist; nor may a public card embed a private (non-`assets/public/`) asset (the reconciler would abort — the audit previews it).
+- **Unsynced edits** — the card's markdown text differs from what's in Anki: it was edited but not reconciled. Run the reconciler to push it. (This is a deterministic text diff, *not* a semantic "the page drifted from the card" signal — that judgment belongs to the prose-level checks above and the card-quality reviewer.)
+- **Hand-edited / orphaned** — an id matching no note (a hand-edit, or a not-yet-synced new card), or a `wiki::synced` note matching no card (a pending suspend).
+
+Report, don't auto-fix — same as every other check.
+
 ## Output
 
 Present findings as a clear report grouped by category. For each finding:
@@ -132,3 +148,4 @@ If the user approves fixes:
 2. Update `index.md` and `log.md`
 3. Run `qmd update && qmd embed`
 4. Review the diff (`git status` / `git diff`) and commit it using the `commit` skill for the message
+5. If any **card text** changed (e.g. a stale-answer fix) and the Anki pipeline was enabled (`.anki-enabled` present), run the reconciler so the edit reaches Anki: `uv run --with anki==<anki-version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run` (then apply with the desktop closed)

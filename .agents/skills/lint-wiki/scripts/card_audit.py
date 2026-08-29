@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Card-health checks for /lint-wiki. Reports only — never fixes (lint's rule).
+
+Two layers (plan §13):
+  - markdown-structure (stdlib): duplicate ids, unminted MINT, malformed blocks,
+    a `## Anki Cards` section on a non-public/.local page (privacy).
+  - Anki-cross (needs the notes table): stale, hand-edited, orphaned. These need
+    the pinned venv, so pass --with-anki and run under uv.
+
+    /usr/bin/python3 .agents/skills/lint-wiki/scripts/card_audit.py            # markdown only
+    uv run --with anki==<anki-version> python .agents/skills/lint-wiki/scripts/card_audit.py --with-anki
+    /usr/bin/python3 .agents/skills/lint-wiki/scripts/card_audit.py --self-test
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "..",
+        "process-inbox",
+        "scripts",
+    ),
+)
+import card_lib
+
+MANAGED_TAG = "wiki::synced"
+ORPHAN_TAG = "wiki::orphaned"
+NOTETYPE = "Wiki Card"  # pipeline's own notetype — scope managed queries to it
+
+
+def find_pages(vault="."):
+    pages = []
+    for dp, _d, fs in os.walk(os.path.join(vault, "wiki")):
+        for f in fs:
+            if f.endswith(".md"):
+                pages.append(os.path.relpath(os.path.join(dp, f), vault))
+    return sorted(pages)
+
+
+def scan_markdown(pages_text, public):
+    """pages_text: {path: text}; public: set of card-eligible paths. Pure."""
+    out = {
+        "malformed": [],
+        "unminted": [],
+        "duplicate": [],
+        "privacy": [],
+        "media": [],
+    }
+    locs = {}  # ulid -> [paths]
+    for path, text in pages_text.items():
+        pr = card_lib.parse_cards(text, path)
+        out["malformed"].extend(pr.errors)
+        for c in pr.placeholders:
+            out["unminted"].append(
+                f"{path}:{c.start + 1}: MINT placeholder — run mint_ids.py"
+            )
+        if pr.has_section and path not in public:
+            out["privacy"].append(
+                f"{path}: has `## Anki Cards` but is not git-public / is .local — must not exist"
+            )
+        for c in pr.cards:
+            locs.setdefault(c.id, []).append(path)
+            # Preview a reconcile-blocker the reconciler would abort on: a public
+            # card embedding a private (non-`assets/public/`) asset.
+            if path in public:
+                for m in card_lib.find_media(c.front + "\n" + c.back):
+                    if not m.public:
+                        out["media"].append(
+                            f"{path}: card {c.id} embeds non-public asset {m.asset} "
+                            "— reconcile would abort"
+                        )
+    for ulid, where in sorted(locs.items()):
+        if len(where) > 1:
+            out["duplicate"].append(f"{ulid}: on {', '.join(where)}")
+    return out
+
+
+def scan_anki(vault_cards, col):
+    """vault_cards: {ulid: {page, front, back, source}} with the fields already
+    rendered exactly as the reconciler renders them. Needs an open collection."""
+    out = {"orphaned": [], "hand_edited": [], "unsynced": []}
+    managed = {}  # guid -> note
+    # Scope to the pipeline's own notetype so a foreign note that happens to carry
+    # `wiki::synced` isn't mistaken for a managed card.
+    for nid in col.find_notes(f'tag:{MANAGED_TAG} "note:{NOTETYPE}"'):
+        n = col.get_note(nid)
+        managed[n.guid] = n
+    for gid, note in managed.items():
+        if gid not in vault_cards and ORPHAN_TAG not in note.tags:
+            out["orphaned"].append(
+                f"{gid}: in Anki (wiki::synced) but no card in the vault — pending suspend"
+            )
+    for ulid, r in vault_cards.items():
+        note = managed.get(ulid)
+        if note is None:
+            out["hand_edited"].append(
+                f"{ulid} ({r['page']}): matches no note in Anki — a new unsynced card or a hand-edited id"
+            )
+        # Compare rendered Front/Back/Source to the synced note. This catches a card
+        # whose markdown was EDITED but not yet reconciled — not semantic "the page
+        # drifted from the card" (a judgment call left to the broader lint /
+        # card-quality reviewer, which read the prose).
+        elif (
+            note["Front"] != r["front"]
+            or note["Back"] != r["back"]
+            or note["Source"] != r["source"]
+        ):
+            out["unsynced"].append(
+                f"{ulid} ({r['page']}): card text differs from the synced note — reconcile to push it"
+            )
+    return out
+
+
+_TITLES = {
+    "malformed": "MALFORMED CARD BLOCKS (won't parse to (id, front, back))",
+    "unminted": "UNMINTED PLACEHOLDERS (MINT left in place)",
+    "duplicate": "DUPLICATE IDS (same ULID on 2+ blocks)",
+    "privacy": "PRIVACY (cards section on a non-public page)",
+    "media": "PRIVATE MEDIA IN A PUBLIC CARD (reconcile would abort)",
+    "orphaned": "ORPHANED IN ANKI (pending suspend)",
+    "hand_edited": "UNKNOWN IDS (new-unsynced or hand-edited)",
+    "unsynced": "UNSYNCED CARD EDITS (card text changed but not reconciled)",
+}
+
+
+def _report(findings):
+    problems = 0
+    for key, items in findings.items():
+        print(f"=== {_TITLES[key]} ({len(items)}) ===")
+        for i in items:
+            print(f"    {i}")
+        if not items:
+            print("    (none)")
+        print()
+        problems += len(items)
+    print(f"summary: {problems} card-health finding(s)")
+    return problems
+
+
+def main(argv):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--with-anki", action="store_true")
+    ap.add_argument("--collection")
+    ap.add_argument("--profile", default="Wiki")
+    ap.add_argument("--vault", default=".")
+    a = ap.parse_args(argv[1:])
+
+    pages = find_pages(a.vault)
+    pages_text = {
+        p: open(os.path.join(a.vault, p), encoding="utf-8").read() for p in pages
+    }
+    public = card_lib.public_pages(pages, cwd=a.vault)
+    findings = scan_markdown(pages_text, public)
+
+    if a.with_anki:
+        from anki.collection import Collection
+
+        col_path = a.collection or os.path.expanduser(
+            f"~/Library/Application Support/Anki2/{a.profile}/collection.anki2"
+        )
+        # Guard before opening: Collection() creates a fresh db at any path, so a
+        # typo'd --collection or a never-opened profile would otherwise make this
+        # report-only audit silently write a new database and compare against it.
+        if not os.path.exists(col_path):
+            print(
+                f"no collection at {col_path} — open the '{a.profile}' profile in Anki once to create it.",
+                file=sys.stderr,
+            )
+            return 2
+        vault_cards = {}
+        # Match the reconciler: derive the vault name from the scanned root, not the
+        # cwd, or the Source field never matches and every card is falsely STALE.
+        vname = card_lib.vault_name(a.vault)
+        for p in sorted(public):
+            source = card_lib.source_uri(p, vault=vname)
+            for c in card_lib.parse_cards(pages_text[p], p).cards:
+                vault_cards[c.id] = {
+                    "page": p,
+                    "front": card_lib.render_field(c.front),
+                    "back": card_lib.render_field(c.back),
+                    "source": source,
+                }
+        try:
+            col = Collection(col_path)
+        except Exception as e:
+            if not any(
+                w in str(e).lower() for w in ("lock", "in use", "busy", "already open")
+            ):
+                raise
+            # Report the markdown checks, but DON'T exit clean: the caller asked for
+            # --with-anki and the Anki-cross layer never ran, so a green exit here
+            # would be a false all-clear. Signal it distinctly.
+            _report(findings)
+            print(
+                "\ncollection locked (Anki desktop open on this profile?) — the Anki-cross "
+                "checks (orphaned / unknown / unsynced) did NOT run; re-run with the "
+                "desktop closed.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            findings.update(scan_anki(vault_cards, col))
+        finally:
+            col.close()
+
+    return 0 if _report(findings) == 0 else 1
+
+
+# --- self-test (markdown layer; anki layer uses reconcile-verified primitives) ---
+def _self_test():
+    ok = True
+
+    def want(name, cond):
+        nonlocal ok
+        ok = ok and cond
+        print(f"  [{'ok' if cond else 'FAIL'}] {name}")
+
+    A = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    card = lambda front, cid: f"> [!card]- {front}\n> ans\n> <!-- anki: {cid} -->\n"
+    p1 = "## Anki Cards\n\n" + card("q1", A) + "\n" + card("q2", "MINT")
+    p2 = "## Anki Cards\n\n" + card("dup", A) + "\n> [!card]- no id here\n> body\n"
+    p3 = "## Anki Cards\n\n" + card("private", "01BX5ZZKBKACTAV9WEVGEMMVRZ")
+    pages_text = {"wiki/Pub/p1.md": p1, "wiki/Pub/p2.md": p2, "wiki/Priv/p3.md": p3}
+    public = {"wiki/Pub/p1.md", "wiki/Pub/p2.md"}  # p3 is private
+
+    f = scan_markdown(pages_text, public)
+    want("1 unminted (MINT on p1)", len(f["unminted"]) == 1)
+    want("1 malformed (id-less block on p2)", len(f["malformed"]) == 1)
+    want(
+        "1 duplicate (A on p1+p2)", len(f["duplicate"]) == 1 and A in f["duplicate"][0]
+    )
+    want(
+        "1 privacy (p3 not public)",
+        len(f["privacy"]) == 1 and "p3.md" in f["privacy"][0],
+    )
+    print("\nRESULT:", "PASS" if ok else "FAIL")
+    return ok
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        sys.exit(0 if _self_test() else 1)
+    sys.exit(main(sys.argv))

@@ -58,13 +58,34 @@ For each item:
 - Update `index.md` with new/modified pages
 - Append entries to `log.md` with format: `## [YYYY-MM-DD] ingest | description`
 
-### 7. Archive
+### 7. Generate Anki cards (Phase 2, optional)
+
+**Only if the Anki flashcard pipeline was enabled** during `install-wiki` (its optional Anki step). The pipeline's files — the scripts and `.aeview/reviewers/` — ship with the template, so their mere presence proves nothing; `install-wiki` writes a `.anki-enabled` marker at the vault root **only** when the user opts in. If `test -f .anki-enabled` fails (marker absent), skip straight to Archive. See `<anki_flashcards>` in AGENTS.md for the two-store model.
+
+Run this **only after every page is in its final state** (all writes/merges/splits done, index and log updated). Generate from the session **manifest** — the pages you created or substantially rewrote (a typo fix doesn't count).
+
+1. **Gate.** Keep only manifest pages that are **git-public** and not `*.local.md` (the same `git check-ignore` test `card_lib.public_pages` uses) — i.e. pages in a domain the owner made public during `install-wiki`. Skip stubs, link-dumps, logs, and reference-only tables — not everything true is worth memorising. The gate is git-derived, so it tracks the owner's public/private choice automatically; a domain made public later is picked up with no code change. **Never** generate from a private domain.
+2. **Draft.** For each qualifying page, draft candidate cards into a `## Anki Cards` block on the page (last section, after any `> Source:` footer), following the rubric in `.aeview/reviewers/` (the `_shared/value-bar.md` bar + the two reviewer prompts): one fact per card; mechanisms / tradeoffs / contrasts; faithful to the page **and its git-public linked pages only**. Give each card `<!-- anki: MINT -->`.
+3. **Mint ids (before review).** Replace the `MINT` placeholders with fresh vault-unique ULIDs now, so every candidate has a **stable, unique identity** going into the panel — the reviewers report findings by card id and dedupe on it, so a set of cards all still reading `MINT` would collapse into one and hide findings:
+   ```bash
+   /usr/bin/python3 .agents/skills/process-inbox/scripts/mint_ids.py <pages>
+   ```
+4. **Judge (aeview panel).** Some of `<pages>` are often **newly created** this session, and `git diff` omits untracked files — so mark them intent-to-add first, or their cards never reach the panel and the review is silently skipped. Then diff and run both reviewers, which read the named source page from the repo (read-only) for context, so only the diff goes over stdin:
+   ```bash
+   git add -N -- <pages>          # intent-to-add, so brand-new pages appear in the diff
+   git diff -- <pages> | aeview run --scope patch:- --reviewers card-quality,coverage --json
+   ```
+   Treat an **empty patch as a bug, not an approval**: it means no card diff reached the panel (nothing changed/added), so no review happened — investigate rather than proceeding.
+5. **Revise to `approve`.** On `needs-attention` (exit 1), read `report.json`: fix / split / drop / dedupe the flagged cards, add cards for any `uncovered` gaps, then re-run. Any **new** card you add while revising gets `<!-- anki: MINT -->`; re-run `mint_ids.py <pages>` before re-judging (it's idempotent — it only touches placeholders, never an existing ULID). Repeat until `approve` (exit 0) or a small max-round cap. Resolve any contradiction (a card dropped `low-value` vs a topic flagged `uncovered`) with one judgement.
+6. **Report** the new cards (page + Front) in the session report.
+
+### 8. Archive
 
 Move processed inbox items to `inbox/processed/` (private) — binaries included, exactly like notes. Items that arrived via `inbox/public/` also archive to `inbox/processed/` — this clears the public drop zone and removes the raw capture from git on the next push (the processed wiki page is the durable record).
 
 **Collision handling:** If a file with the same name already exists in `inbox/processed/`, do NOT overwrite. Ask the user what to do and suggest semantically meaningful alternative names based on the note's content (e.g., if both are called `meeting-notes.md`, suggest `meeting-notes-standup.md` or `meeting-notes-planning.md`). Never silently overwrite archived files.
 
-### 8. Re-index
+### 9. Re-index
 
 Run:
 ```bash
@@ -73,6 +94,16 @@ qmd update && qmd embed
 
 This ensures new content is immediately searchable. Do not prompt the user — just run it.
 
-### 9. Commit
+### 10. Commit
 
 Review the diff (`git status` / `git diff`) and commit it on the default branch, using the `commit` skill for the message. If the diff is empty — the work was entirely in gitignored/private domains — there's nothing to commit; say so and stop.
+
+### 11. Reconcile to Anki (Phase 3, optional)
+
+**Only if the Anki pipeline was enabled** (the `.anki-enabled` marker — see step 7). Deterministic — no LLM judgement. Push the vault's cards into the local Anki collection. **Dry-run first**, and never let this fail the run (the cards are already durable in the committed pages).
+
+```bash
+uv run --with anki==<anki-version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run
+```
+
+If the diff looks right and the orphan guard didn't trip, drop `--dry-run` to apply. It scans the **whole vault** (not just this session's pages), so it catches orphans and anything an earlier run missed; orphans are suspended and tagged `wiki::orphaned`, never deleted. If Anki desktop is open on this vault's profile the collection is locked — the script prints "collection locked … skipping sync" and exits cleanly, so re-run it yourself with the desktop closed. On Linux/Windows or a non-default profile, pass `--collection /path/to/collection.anki2` (or `--profile <name>`). A failure here reports and exits; the next run reconciles. Runnable standalone any time the desktop is closed.

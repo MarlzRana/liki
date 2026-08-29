@@ -91,7 +91,9 @@ def main():
         sorted(broken_embeds.items()),
         lambda kv: f"    ![[{kv[0]}]]  <- in {', '.join(kv[1])}",
     )
-    section("ISOLATED (no incoming, no outgoing)", isolated, lambda n: f"    {pages[n]}")
+    section(
+        "ISOLATED (no incoming, no outgoing)", isolated, lambda n: f"    {pages[n]}"
+    )
     section("ORPHANS (no incoming content link)", orphans, lambda n: f"    {pages[n]}")
     section("DEAD ENDS (no outgoing link)", deadends, lambda n: f"    {pages[n]}")
 

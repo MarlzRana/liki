@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "card_id": {
+      "type": "string",
+      "description": "ULID of the offending card, from its <!-- anki: … --> comment"
+    },
+    "reason": {
+      "type": "string",
+      "description": "why this card triggers the category, citing the source page"
+    },
+    "suggested_fix": {
+      "type": ["string", "null"],
+      "description": "split / reword / drop … or null"
+    }
+  },
+  "required": ["card_id", "reason", "suggested_fix"],
+  "additionalProperties": false
+}
