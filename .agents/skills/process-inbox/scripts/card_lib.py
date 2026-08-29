@@ -143,7 +143,9 @@ def parse_cards(text, path="<mem>"):
         card = Card(
             id=card_id,
             front=front,
-            back="\n".join(back_lines).strip(),
+            # strip only blank lines top/bottom — keep horizontal indentation, so a
+            # deliberately-indented first/last line isn't silently de-dented.
+            back="\n".join(back_lines).strip("\r\n"),
             start=i,
             end=block_end,
         )
@@ -151,7 +153,7 @@ def parse_cards(text, path="<mem>"):
             res.errors.append(
                 f"{path}:{i + 1}: [!card] has an empty front (no question)"
             )
-        if not card.back:
+        if not card.back.strip():
             res.errors.append(f"{path}:{i + 1}: [!card] has an empty back (no answer)")
         # Quoted content after the id comment in the same callout is silently lost
         # (the block already closed at the id line) — flag it rather than drop it.
@@ -297,23 +299,30 @@ def render_field(text):
     LaTeX → MathJax and `![[assets/…]]` → `<img>` are rendered first and stashed
     behind NUL sentinels; the remaining prose is HTML-escaped, so stray `<`, `>`,
     `&` in prose (`A < B`, `<EOS>`, `List<T>`) render literally instead of being
-    swallowed as markup; intra-line whitespace is collapsed while line breaks
-    become `<br>`; then the rendered math/img is restored verbatim. NFC-normalized
-    to match Anki's canonical field form, which avoids spurious updates when a page
-    carries non-NFC text (common from speech-to-text capture)."""
+    swallowed as markup; leading indentation is preserved and line breaks become
+    `<br>`; then the rendered math/img is restored verbatim. Math content and the
+    image `src` are themselves HTML-escaped before stashing, so a crafted card
+    (`$<img onerror=…>$`, or an asset named `x" onerror="….png`) can't inject live
+    markup into Anki's webview — MathJax reads the entity-decoded text, so escaping
+    is transparent to it. NFC-normalized to match Anki's canonical field form, which
+    avoids spurious updates on non-NFC text (common from speech-to-text)."""
     saved = []
 
     def stash(rendered):
         saved.append(rendered)
         return f"\x00{len(saved) - 1}\x00"
 
-    s = _BLOCK_MATH.sub(lambda m: stash(r"\[" + m.group(1) + r"\]"), text)
-    s = _INLINE_MATH.sub(lambda m: stash(r"\(" + m.group(1) + r"\)"), s)
+    def esc(s):
+        return html.escape(s, quote=False)
+
+    s = _BLOCK_MATH.sub(lambda m: stash(r"\[" + esc(m.group(1)) + r"\]"), text)
+    s = _INLINE_MATH.sub(lambda m: stash(r"\(" + esc(m.group(1)) + r"\)"), s)
 
     def _img(m):
         width = _embed_width(m.group(2))
         w = f' width="{width}"' if width else ""
-        return stash(f'<img src="{os.path.basename(m.group(1).strip())}"{w}>')
+        src = html.escape(os.path.basename(m.group(1).strip()), quote=True)
+        return stash(f'<img src="{src}"{w}>')
 
     s = _EMBED.sub(_img, s)
     s = html.escape(s, quote=False)  # prose only — math/img are stashed away
@@ -351,6 +360,43 @@ $$ E = mc^2 $$
 
 > <!-- anki: 01BX5ZZKBKACTAV9WEVGEMMVRZ -->
 """
+
+
+def _public_pages_test():
+    """The privacy gate needs a real git repo — build a throwaway one in a temp dir
+    and assert the fail-closed contract (allowlist, .local.md, non-ASCII paths)."""
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+
+        def run(*a):
+            subprocess.run(a, cwd=d, check=True, capture_output=True)
+
+        run("git", "init")
+        for sub in ("wiki/Pub", "wiki/Priv"):
+            os.makedirs(os.path.join(d, sub))
+        # ignore all of wiki/, re-include Pub/; *.local.md never committed (last).
+        with open(os.path.join(d, ".gitignore"), "w") as fh:
+            fh.write("wiki/*\n!wiki/Pub/\n!wiki/Pub/**\n*.local.md\n")
+        cand = [
+            "wiki/Pub/a.md",  # public
+            "wiki/Pub/Café.md",  # public, non-ASCII
+            "wiki/Pub/x.local.md",  # public dir but .local.md → never
+            "wiki/Priv/b.md",  # private
+            "wiki/Priv/Café.md",  # private, non-ASCII (fail-closed check)
+        ]
+        for rel in cand:
+            with open(os.path.join(d, rel), "w", encoding="utf-8") as fh:
+                fh.write("x")
+        got = public_pages(cand, cwd=d)
+    want = {"wiki/Pub/a.md", "wiki/Pub/Café.md"}
+    good = got == want
+    print(
+        f"  [{'ok' if good else 'FAIL'}] public_pages gate: {sorted(got)}"
+        + ("" if good else f"  != {sorted(want)}")
+    )
+    return good
 
 
 def _self_test():
@@ -396,6 +442,12 @@ def _self_test():
         len(tail.errors) == 1 and "after the" in tail.errors[0],
         True,
     )
+    ind = parse_cards(
+        "## Anki Cards\n> [!card]- Q?\n>     indented first line\n"
+        "> <!-- anki: 01ARZ3NDEKTSV4RRFFQ69G5FAV -->\n",
+        "ind.md",
+    )
+    eq("first-line indentation preserved", ind.cards[0].back.startswith("    "), True)
 
     print("deck_for_page:")
     eq("nested", deck_for_page("wiki/Domain/Sub/Some Page.md"), "Wiki::Domain::Sub")
@@ -446,9 +498,19 @@ def _self_test():
         "if A &lt; B and x&gt;0 &amp; done",
     )
     eq(
-        "does not escape inside math",
+        "math content is escaped (safe, transparent to MathJax)",
         render_field("$a < b$"),
-        r"\(a < b\)",
+        r"\(a &lt; b\)",
+    )
+    eq(
+        "math injection is neutralised",
+        render_field("$<img src=x onerror=alert(1)>$"),
+        r"\(&lt;img src=x onerror=alert(1)&gt;\)",
+    )
+    eq(
+        "asset name can't break the src attribute",
+        render_field('![[assets/public/x" onerror="alert(1).png]]'),
+        '<img src="x&quot; onerror=&quot;alert(1).png">',
     )
     eq(
         "currency is not math",
@@ -470,6 +532,9 @@ def _self_test():
         render_field("def f():\n    return 1"),
         "def f():<br>    return 1",
     )
+
+    print("public_pages (git gate):")
+    ok = _public_pages_test() and ok
 
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return ok

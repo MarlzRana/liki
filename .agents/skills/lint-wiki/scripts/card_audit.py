@@ -155,8 +155,11 @@ def main(argv):
             )
             return 2
         vault_cards = {}
+        # Match the reconciler: derive the vault name from the scanned root, not the
+        # cwd, or the Source field never matches and every card is falsely STALE.
+        vname = card_lib.vault_name(a.vault)
         for p in sorted(public):
-            source = card_lib.source_uri(p)
+            source = card_lib.source_uri(p, vault=vname)
             for c in card_lib.parse_cards(pages_text[p], p).cards:
                 vault_cards[c.id] = {
                     "page": p,

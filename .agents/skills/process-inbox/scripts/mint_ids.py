@@ -19,6 +19,8 @@ import re
 import sys
 import time
 
+import card_lib  # same dir — on sys.path when run as a script
+
 # Crockford base32 (no I, L, O, U) — matches card_lib.ULID_RE
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _ULID = re.compile(r"<!--\s*anki:\s*([0-9A-HJKMNP-TV-Z]{26})\s*-->")
@@ -57,20 +59,29 @@ def existing_ulids(roots=_SCAN_ROOTS):
 
 
 def mint_in_text(text, taken, gen=new_ulid):
-    """Replace every MINT placeholder with a fresh ULID not in `taken` (mutated).
+    """Replace each MINT placeholder that sits in a real `## Anki Cards` card block
+    with a fresh ULID not in `taken` (mutated). A `<!-- anki: MINT -->` elsewhere in
+    the note — prose, a code sample, a page documenting this very convention — is
+    left alone: parse_cards would never sync it, so minting it would only strand a
+    dead id in the text.
 
     Returns (new_text, [minted_ids]). Pure except for growing `taken`."""
+    placeholders = card_lib.parse_cards(text).placeholders
+    if not placeholders:
+        return text, []
+    lines = text.splitlines(keepends=True)  # index-aligned with parse_cards' view
     minted = []
-
-    def repl(m):
-        while True:
+    for card in placeholders:
+        u = gen()
+        while u in taken:
             u = gen()
-            if u not in taken:
-                taken.add(u)
-                minted.append(u)
-                return m.group(0).replace("MINT", u)
-
-    return _MINT.sub(repl, text), minted
+        taken.add(u)
+        minted.append(u)
+        # card.end is the 0-based line index of this card's `<!-- anki: MINT -->`
+        lines[card.end] = _MINT.sub(
+            lambda m, u=u: m.group(0).replace("MINT", u), lines[card.end], count=1
+        )
+    return "".join(lines), minted
 
 
 def main(argv):
@@ -125,14 +136,18 @@ def _self_test():
 
     print("mint_in_text:")
     sample = (
+        # a MINT in prose (outside the section) must be left alone
+        "Docs: a fresh card uses `<!-- anki: MINT -->` as its id.\n\n"
+        "## Anki Cards\n\n"
         "> [!card]- Q1\n> A1\n> <!-- anki: MINT -->\n\n"
         "> [!card]- Q2\n> A2\n> <!-- anki: 01ARZ3NDEKTSV4RRFFQ69G5FAV -->\n\n"
         "> [!card]- Q3\n> A3\n> <!-- anki: MINT -->\n"
     )
     taken = {"01ARZ3NDEKTSV4RRFFQ69G5FAV"}
     new, minted = mint_in_text(sample, taken)
-    want("minted exactly 2", len(minted) == 2)
-    want("no MINT left", "MINT" not in new)
+    want("minted exactly 2 (in-section only)", len(minted) == 2)
+    want("prose MINT left untouched", "uses `<!-- anki: MINT -->` as its id" in new)
+    want("no in-card MINT left", new.count("MINT") == 1)  # only the prose mention
     want("existing id untouched", "01ARZ3NDEKTSV4RRFFQ69G5FAV" in new)
     want(
         "minted ids are ULIDs",
