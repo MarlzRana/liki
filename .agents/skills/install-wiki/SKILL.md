@@ -246,10 +246,67 @@ This only works if **iCloud** (not a local-only folder) was chosen as the storag
 in step 2. If they picked a local path, there's nothing to open on mobile — mention that
 they can move the vault into iCloud later if they want phone sync.
 
-## 12. Wrap up
+## 12. (Optional) Set up Anki flashcards
+
+The template ships an optional **wiki → Anki** spaced-repetition pipeline. When set up,
+`process-inbox` turns git-public pages into flashcards (stored as `> [!card]-` callouts in
+a `## Anki Cards` section on the page), an adversarial **aeview** reviewer panel judges
+card quality, and a deterministic reconciler syncs them into a local Anki collection —
+markdown owns the card content and identity, Anki owns only the scheduling. See
+`<anki_flashcards>` in AGENTS.md for the model.
+
+**Ask the user whether they want it.** It stays off until set up and adds a few
+dependencies; it can be enabled later by running these sub-steps. If they decline, skip to
+Wrap up. The pipeline code — the scripts, the `.aeview/` reviewers, and the
+`.obsidian/snippets/anki-cards.css` styling — already arrived with the clone; this step
+only installs the runtime and wires it up.
+
+1. **Install Anki desktop and pin the backend to match.** The reconciler talks to the
+   collection through the `anki` Python package, whose version **must equal the desktop
+   app's** or the collection format can mismatch.
+   ```bash
+   brew install --cask anki   # macOS; on Linux/Windows install Anki from your package manager / anki's site
+   # Read the installed version (macOS):
+   /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' /Applications/Anki.app/Contents/Info.plist
+   ```
+   Take that version (e.g. `26.08.1`) and **replace every `<anki-version>` placeholder in
+   the repo** with it, then confirm the pinned backend imports cleanly:
+   ```bash
+   grep -rl '<anki-version>' .agents | xargs sed -i '' 's/<anki-version>/<version>/g'  # GNU sed: drop the ''
+   uv run --with anki==<version> python -c "import anki; print(anki.version)"
+   ```
+2. **Install the aeview reviewer CLI.** The card-quality panel runs through
+   [aeview](https://github.com/MarlzRana/aeview):
+   ```bash
+   npx skills add MarlzRana/aeview --skill aeview-install --global
+   ```
+   Then run **`/aeview-install`** in the agent — it installs the `aeview` CLI and its
+   bundled harnesses. The shipped reviewers (`.aeview/reviewers/card-quality` and
+   `coverage`) default to a **single `claude-code` harness**; to strengthen the panel into
+   a cross-vendor jury, uncomment the extra harnesses in each `REVIEWER.md` for providers
+   you've authenticated in aeview (e.g. `codex`, `copilot`, `pi`).
+3. **Create the Anki profile and collection.** The reconciler defaults to a profile named
+   **`Wiki`**. In Anki: *File → Switch Profile → Add* → name it `Wiki`, then open it once
+   so Anki writes the collection file (`~/Library/Application Support/Anki2/Wiki/collection.anki2`
+   on macOS; `~/.local/share/Anki2/…` on Linux, `%APPDATA%/Anki2/…` on Windows). To use a
+   different name or path, pass `--profile <name>` / `--collection <path>` to the reconciler.
+4. **Enable the card-callout styling.** In Obsidian: *Settings → Appearance → CSS snippets*
+   → toggle **anki-cards** on (hit the reload icon if it isn't listed yet).
+5. **Verify (optional).** With Anki desktop **closed**, a dry-run should report an empty,
+   clean plan on a fresh vault:
+   ```bash
+   uv run --with anki==<version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run
+   ```
+
+From here it's automatic: `process-inbox` generates and reconciles cards (its steps 7 and
+11), and `lint-wiki` health-checks them (its Card Health check). Add a `log.md` line noting
+the Anki pipeline was enabled.
+
+## 13. Wrap up
 
 Summarise what was created (repo + visibility, vault path, domains + privacy, tools
-installed) and point them at the next step:
+installed, and whether the optional Anki pipeline was enabled) and point them at the next
+step:
 
 - Drop a note or file into `inbox/` and run **`/process-inbox`** to file it.
 - Pull future template improvements with `git fetch upstream && git merge upstream/main`

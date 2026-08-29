@@ -211,6 +211,41 @@ Wiki pages have frontmatter compatible with Obsidian's Dataview plugin. The owne
 </dataview>
 </tooling>
 
+<anki_flashcards>
+**Optional.** The template ships a wiki → Anki spaced-repetition pipeline, enabled via the optional step in `install-wiki`. If it wasn't set up (`.aeview/reviewers/` absent, Anki not pinned), ignore this block — the wiki works fully without it.
+
+**Two stores, no sidecar.** The markdown page owns each card's *content and identity*; the Anki collection owns only the *scheduling* (intervals, ease, due dates). There is no database or sidecar file — the pages are the source of truth, and a deterministic reconciler makes the collection match them.
+
+<card_grammar>
+Cards live in a single `## Anki Cards` section, always the **last** section of a page (after any `> Source:` footer). Each card is a foldable callout:
+
+```markdown
+## Anki Cards
+
+> [!card]- Front: the question, on the marker line
+> Back: the answer, on the continuation line(s).
+> <!-- anki: 01M157K8QWJF6V31VASZ5J2Y5Z -->
+```
+
+- The `<!-- anki: … -->` comment holds the card's **ULID** — its stable identity (the Anki `note.guid`). A freshly drafted card uses the placeholder `<!-- anki: MINT -->`; `mint_ids.py` replaces `MINT` with a vault-unique ULID.
+- One fact per card. `$…$` / `$$…$$` LaTeX and `![[assets/public/…]]` image embeds render in Anki. A card may only embed a **public** asset — never private content.
+</card_grammar>
+
+<what_syncs>
+- **Eligibility is git-derived.** Cards come only from **git-public** pages (the same `git check-ignore` gate assets use) — i.e. domains the owner made public in `install-wiki`; `.local.md` pages are always excluded. Never generate cards from a private page.
+- **Decks mirror folders.** A page at `wiki/<Domain>/<Sub>/Page.md` maps to the Anki deck `Wiki::<Domain>::<Sub>`.
+- **Binning a card** = delete its callout from the page. On the next reconcile the matching note is **suspended and tagged `wiki::orphaned`** (never deleted, so its scheduling history survives); an orphan-count guard aborts a run that would suspend a suspicious number at once.
+- **Editing a card** = edit the Front/Back in markdown and leave the `<!-- anki: … -->` id alone; the reconciler propagates the new text on the next sync.
+</what_syncs>
+
+<wiring>
+- **Generate + reconcile** — `process-inbox` steps 7 (aeview-judged card generation) and 11 (deterministic reconcile).
+- **Health-check** — `lint-wiki`'s Card Health check (malformed/unminted ids, privacy leaks, stale answers, orphans).
+- **Reviewer rubric** — `.aeview/reviewers/` (a `card-quality` lens and a `coverage` lens over a shared `value-bar.md`).
+- **Scripts** — `.agents/skills/process-inbox/scripts/` (`card_lib.py`, `mint_ids.py`, `anki_reconcile.py`) and `.agents/skills/lint-wiki/scripts/card_audit.py`.
+</wiring>
+</anki_flashcards>
+
 <skills>
 - **When the owner wants to process/organize notes** → use `/process-inbox`
 - **When the owner is querying/searching the wiki** → use `/query-wiki`
@@ -219,4 +254,5 @@ Wiki pages have frontmatter compatible with Obsidian's Dataview plugin. The owne
 - **When an inbox note points at an Instagram image/carousel post** → use `/process-instagram-source` to extract it, then carry on with `/process-inbox`
 - **When setting up this existing wiki on a new machine** → owner will invoke `/setup-existing-wiki` themselves
 - **To create a brand-new wiki from the liki template** → `/install-wiki` (a one-time bootstrap; already run for this vault, but re-runnable or usable to help set up a friend)
+- **Anki flashcards** (optional) have no skill of their own — they're generated inside `/process-inbox` (steps 7 and 11) and health-checked inside `/lint-wiki`. See `<anki_flashcards>`.
 </skills>

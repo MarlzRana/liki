@@ -18,6 +18,8 @@
 # OS / editor cruft
 .DS_Store
 .trash/
+__pycache__/
+*.pyc
 
 # ── Vault content: private by default ──
 wiki/*
@@ -40,6 +42,12 @@ log.md
 !.obsidian/app.json
 !.obsidian/core-plugins.json
 !.obsidian/community-plugins.json
+
+# Ship the Anki-card callout styling (only this snippet — not the user's own).
+# Re-include the dir, re-ignore its contents, then re-include the one file.
+!.obsidian/snippets/
+.obsidian/snippets/*
+!.obsidian/snippets/anki-cards.css
 
 # ── PUBLIC ALLOWLIST ──
 # install-wiki writes your chosen public wiki/ domains here. Example, to make

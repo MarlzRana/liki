@@ -109,6 +109,22 @@ This checks every rule above in one pass, scanning both `wiki/` and `inbox/` for
 
 Two categories are printed as `(info)` rather than as defects, because they are usually deliberate: assets with no reference anywhere, and assets referenced only by an archived `inbox/processed/` note. **Check `log.md` before reporting these** — past lints have explicitly accepted some (superseded diagrams the owner chose to keep, and captures left unembedded on purpose because they contain a bystander's likeness or are text overlaid on an unrelated photo). Re-flagging those each lint is noise.
 
+### 8. Card Health (Anki pipeline, optional)
+
+**Only if the Anki flashcard pipeline is set up** (the optional step in `install-wiki`). If the scripts below aren't present, skip this check. See `<anki_flashcards>` in AGENTS.md for the model. Check the `## Anki Cards` blocks and their sync state. The markdown-structure checks are stdlib; the Anki-cross checks need the pinned venv (run with Anki desktop closed, or they hit the collection lock):
+
+```bash
+/usr/bin/python3 .agents/skills/lint-wiki/scripts/card_audit.py
+uv run --with anki==<anki-version> python .agents/skills/lint-wiki/scripts/card_audit.py --with-anki
+```
+
+- **Malformed / unminted / duplicate ids** — these block reconcile; flag them for fixing before the next sync.
+- **Privacy** — a `## Anki Cards` section on a non-git-public or `.local.md` page must not exist.
+- **Stale** — the page changed after the card last synced, so the answer may have drifted. Propose an updated Front/Back (consent-gated) — leave the `<!-- anki: … -->` id untouched; the next reconcile propagates the change.
+- **Hand-edited / orphaned** — an id matching no note (a hand-edit, or a not-yet-synced new card), or a `wiki::synced` note matching no card (a pending suspend).
+
+Report, don't auto-fix — same as every other check.
+
 ## Output
 
 Present findings as a clear report grouped by category. For each finding:
@@ -132,3 +148,4 @@ If the user approves fixes:
 2. Update `index.md` and `log.md`
 3. Run `qmd update && qmd embed`
 4. Review the diff (`git status` / `git diff`) and commit it using the `commit` skill for the message
+5. If any **card text** changed (e.g. a stale-answer fix) and the Anki pipeline is set up, run the reconciler so the edit reaches Anki: `uv run --with anki==<anki-version> python .agents/skills/process-inbox/scripts/anki_reconcile.py --dry-run` (then apply with the desktop closed)
